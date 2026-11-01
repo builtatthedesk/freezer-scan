@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Freezer Labels</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏷️</text></svg>">
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --muted:#636b75; --line:#e2e5ea; --accent:#1f6feb; --chip:#eef1f5; --err:#cf222e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1216; --card:#181c22; --ink:#e8eaed; --muted:#9aa3ad; --line:#2a3038;
+          --accent:#58a6ff; --chip:#232932; --err:#ff7b72; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width:640px; margin:0 auto; padding:16px 16px 48px; }
+  h1 { font-size:22px; margin:4px 0 2px; }
+  .sub { color:var(--muted); font-size:14px; margin:0 0 16px; }
+  .sub a { color:var(--accent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin:0 0 14px; }
+  .kinds { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  .chip { border:1px solid var(--line); background:var(--chip); color:var(--ink); border-radius:999px; padding:8px 14px; font-size:15px; min-height:40px; cursor:pointer; }
+  .chip[aria-pressed=true] { background:var(--accent); border-color:var(--accent); color:#fff; }
+  label { display:block; font-size:14px; color:var(--muted); margin:10px 0 4px; }
+  input { width:100%; font-size:18px; padding:11px 12px; border:1px solid var(--line); border-radius:10px; background:var(--bg); color:var(--ink); }
+  .two { display:grid; grid-template-columns:1fr 110px; gap:10px; }
+  .btns { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+  button.main, button.alt { font-size:17px; padding:12px 18px; border-radius:10px; min-height:46px; cursor:pointer; border:1px solid var(--accent); }
+  button.main { background:var(--accent); color:#fff; font-weight:600; }
+  button.alt { background:transparent; color:var(--accent); }
+  button:disabled { opacity:.5; cursor:default; }
+  .msg { font-size:14px; color:var(--muted); margin:10px 0 0; min-height:1.4em; }
+  .msg.err { color:var(--err); }
+  .previews { display:grid; gap:10px; }
+  .previews img { width:100%; max-width:450px; border:1px solid var(--line); border-radius:6px; background:#fff; }
+  .hint { font-size:14px; color:var(--muted); }
+  .hint li { margin:4px 0; }
+  .sheet { display:none; }
+  @page { size: 90mm 29mm; margin: 0; }
+  @media print {
+    body { background:#fff; }
+    .wrap { display:none; }
+    .sheet { display:block; }
+    .sheet img { display:block; width:90mm; height:28.8mm; break-after:page; page-break-after:always; }
+    .sheet img:last-child { break-after:auto; page-break-after:auto; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🏷️ Make freezer labels</h1>
+  <p class="sub">For 29 × 90 mm labels (Brother DK-1201). <a id="back" href="./">Back to scanning</a></p>
+
+  <div class="card">
+    <div class="kinds" role="group" aria-label="Label type">
+      <button class="chip" type="button" data-kind="food" aria-pressed="true">Food</button>
+      <button class="chip" type="button" data-kind="loc" aria-pressed="false">Freezer</button>
+      <button class="chip" type="button" data-kind="cmd" aria-pressed="false">Take out</button>
+    </div>
+    <form id="form">
+      <label for="name" id="name-label">What's in it</label>
+      <input id="name" autocomplete="off" placeholder="e.g. Chicken soup" maxlength="120" required>
+      <div class="two" id="food-only">
+        <div><label for="date">Date</label><input id="date" type="date" required></div>
+        <div><label for="copies">How many</label><input id="copies" type="number" min="1" max="50" value="1" inputmode="numeric"></div>
+      </div>
+      <div class="btns"><button class="main" type="submit" id="make">Make labels</button></div>
+      <p class="msg" id="msg" role="status"></p>
+    </form>
+  </div>
+
+  <div class="card" id="out" hidden>
+    <div class="previews" id="previews"></div>
+    <div class="btns">
+      <button class="main" type="button" id="print">Print</button>
+      <button class="alt" type="button" id="save">Save images</button>
+    </div>
+    <ul class="hint">
+      <li><b>On a computer:</b> Print, choose the Brother printer, paper size 29 mm × 90 mm, scale 100%.</li>
+      <li><b>On a phone:</b> Save images (or share them) and print them from Brother's label app.</li>
+      <li>Each food label gets its own ID, so two packs of the same food are still told apart.</li>
+    </ul>
+  </div>
+</div>
+<div class="sheet" id="sheet" aria-hidden="true"></div>
+
+<script src="qrcode.js"></script>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const LS = { get(k){ try { return localStorage.getItem(k); } catch { return null; } },
+               set(k,v){ try { localStorage.setItem(k,v); } catch {} } };
+  qrcode.stringToBytes = qrcode.stringToBytesFuncs["UTF-8"];
+
+  // Same key as the scanning page: from the link (#w=...) or remembered on this device.
+  const m = location.hash.match(/[#&]w=([\w-]+)/);
+  if (m && m[1] !== "demo") LS.set("fs.key", m[1]);   // the demo never replaces a real key
+  const key = m ? m[1] : LS.get("fs.key");
+  if (m) $("back").href = "./" + location.hash;
+
+  // 300 dpi: 90 x 29 mm.
+  const W = 1063, H = 343, PAD = 18;
+  let kind = "food", made = [];
+
+  const today = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
+  $("date").value = today();
+
+  function setKind(k){
+    kind = k;
+    document.querySelectorAll("[data-kind]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.kind === k)));
+    $("food-only").hidden = k !== "food";
+    $("date").required = k === "food";
+    $("name-label").textContent = { food: "What's in it", loc: "Which freezer", cmd: "Label text" }[k];
+    $("name").placeholder = { food: "e.g. Chicken soup", loc: "e.g. Garage freezer", cmd: "" }[k];
+    if (k === "cmd") $("name").value = "TAKE OUT";
+    else if ($("name").value === "TAKE OUT") $("name").value = "";
+    $("out").hidden = true;
+  }
+  document.querySelectorAll("[data-kind]").forEach(b => b.addEventListener("click", () => setKind(b.dataset.kind)));
+
+  function prettyDate(d){
+    return new Date(d + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  }
+
+  // Largest font at which the words fit the box, wrapping onto up to 3 lines.
+  function fitLines(ctx, text, maxW, maxH, weight){
+    const words = text.split(/\s+/).filter(Boolean);
+    for (let size = 150; size >= 22; size -= 2){
+      ctx.font = `${weight} ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+      const lines = []; let cur = "";
+      let ok = true;
+      for (const w of words){
+        const t = cur ? cur + " " + w : w;
+        if (ctx.measureText(t).width <= maxW) cur = t;
+        else { if (!cur || ctx.measureText(w).width > maxW) { ok = false; break; } lines.push(cur); cur = w; }
+      }
+      if (!ok) continue;
+      if (cur) lines.push(cur);
+      const lh = size * 1.12;
+      if (lines.length <= 3 && lines.length * lh <= maxH) return { size, lines, lh };
+    }
+    ctx.font = `${weight} 22px system-ui, sans-serif`;
+    return { size: 22, lines: [text.slice(0, 60)], lh: 25 };
+  }
+
+  function drawLabel(payload, title, small){
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+    const qr = qrcode(0, "M"); qr.addData(payload, "Byte"); qr.make();
+    const n = qr.getModuleCount(), side = H - 2 * PAD;
+    const cell = Math.floor(side / (n + 2));           // whole pixels per square, with a quiet zone
+    const qs = cell * n, qx = PAD + Math.floor((side - qs) / 2), qy = Math.floor((H - qs) / 2);
+    ctx.fillStyle = "#000";
+    for (let r = 0; r < n; r++) for (let col = 0; col < n; col++)
+      if (qr.isDark(r, col)) ctx.fillRect(qx + col * cell, qy + r * cell, cell, cell);
+    const x = PAD + side + PAD, maxW = W - x - PAD;
+    const smallH = small ? 56 : 0;
+    const fit = fitLines(ctx, title, maxW, H - 2 * PAD - smallH, 700);
+    const blockH = fit.lines.length * fit.lh + smallH;
+    let y = (H - blockH) / 2 + fit.size * 0.9;
+    ctx.textBaseline = "alphabetic";
+    for (const line of fit.lines){ ctx.fillText(line, x, y); y += fit.lh; }
+    if (small){ ctx.font = `500 40px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`; ctx.fillText(small, x, y - fit.lh + 58); }
+    return c;
+  }
+
+  function msg(t, err){ $("msg").textContent = t; $("msg").classList.toggle("err", !!err); }
+
+  $("form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = $("name").value.replace(/\s+/g, " ").trim();
+    if (!name) return;
+    if (kind === "food" && /^(LOC|CMD):/i.test(name)) return msg("A food name can't start with LOC: or CMD: (those are freezer and command labels).", true);
+    if (/[^ -~]/.test(name)) return msg("Use plain letters only: most scanners can't type accents or emoji, so the name would come out garbled.", true);
+    let labels = [];
+    if (kind === "loc") labels = [{ payload: "LOC: " + name, title: name, small: "Scan me first", file: name }];
+    else if (kind === "cmd") labels = [{ payload: "CMD: " + name.toUpperCase(), title: name.toUpperCase(), small: "", file: name }];
+    else {
+      const n = Math.max(1, Math.min(50, Number($("copies").value) || 1));
+      const date = $("date").value || today();
+      if (!key) return msg("Open this page from your scanning link first, so each label can get its own ID.", true);
+      $("make").disabled = true; msg("Getting label IDs…");
+      try {
+        const r = await fetch("api/ids", { method: "POST", headers: { "x-key": key, "content-type": "application/json" }, body: JSON.stringify({ n }) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
+        labels = j.ids.map(id => ({ payload: `${name}\nPrinted: ${date}\nID: ${id}`, title: name, small: prettyDate(date) + "  ·  " + id, file: name + " " + id }));
+      } catch (err) {
+        $("make").disabled = false;
+        return msg("Couldn't get label IDs (" + err.message + ").", true);
+      }
+      $("make").disabled = false;
+    }
+    made = labels.map(l => Object.assign(l, { canvas: drawLabel(l.payload, l.title, l.small) }));
+    const pv = $("previews"), sh = $("sheet"); pv.replaceChildren(); sh.replaceChildren();
+    for (const l of made){
+      const url = l.canvas.toDataURL("image/png");
+      const a = new Image(); a.src = url; a.alt = l.payload.replace(/\n/g, " | "); pv.append(a);
+      const b = new Image(); b.src = url; b.alt = ""; sh.append(b);
+    }
+    $("out").hidden = false;
+    msg(made.length === 1 ? "1 label ready." : made.length + " labels ready.");
+    $("out").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  $("print").addEventListener("click", () => window.print());
+
+  $("save").addEventListener("click", async () => {
+    const blobs = await Promise.all(made.map(l => new Promise(res => l.canvas.toBlob(res, "image/png"))));
+    const files = blobs.map((b, i) => new File([b], made[i].file.replace(/[^\w -]+/g, "").slice(0, 60) + ".png", { type: "image/png" }));
+    if (navigator.canShare && navigator.canShare({ files })) {
+      try { await navigator.share({ files }); return; } catch (e) { if (e.name === "AbortError") return; }
+    }
+    files.forEach((f, i) => setTimeout(() => {
+      const a = document.createElement("a"); a.href = URL.createObjectURL(f); a.download = f.name; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    }, i * 300));
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+node_modules/
+.keys.env
+.netlify/
+.netlify-site
+docs/*.pdf
+docs/front.png
+docs/storage-mode.png

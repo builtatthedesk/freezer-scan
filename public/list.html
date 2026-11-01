@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Freezer List</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>❄️</text></svg>">
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --muted:#636b75; --line:#e2e5ea; --accent:#1f6feb; --chip:#eef1f5;
+          --mid:#9a6700; --old:#cf222e; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1216; --card:#181c22; --ink:#e8eaed; --muted:#9aa3ad; --line:#2a3038;
+          --accent:#58a6ff; --chip:#232932; --mid:#d29922; --old:#ff7b72; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width:640px; margin:0 auto; padding:16px 16px 48px; }
+  h1 { font-size:22px; margin:4px 0 2px; }
+  .sub { color:var(--muted); font-size:14px; margin:0 0 14px; }
+  .search { position:sticky; top:0; background:var(--bg); padding:8px 0; z-index:2; }
+  input[type=search] { width:100%; font-size:18px; padding:12px 14px; border:1px solid var(--line); border-radius:12px;
+          background:var(--card); color:var(--ink); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 4px; align-items:center; }
+  .chip { border:1px solid var(--line); background:var(--chip); color:var(--ink); border-radius:999px; padding:8px 14px;
+          font-size:15px; min-height:40px; cursor:pointer; }
+  .chip[aria-pressed=true] { background:var(--accent); border-color:var(--accent); color:#fff; }
+  select { font-size:15px; padding:8px 10px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--ink); min-height:40px; }
+  label.small { font-size:14px; color:var(--muted); display:flex; gap:6px; align-items:center; }
+  .count { color:var(--muted); font-size:14px; margin:10px 0 6px; }
+  h2 { font-size:15px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:18px 0 6px; }
+  .item { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 12px; margin:6px 0;
+          display:grid; grid-template-columns:1fr auto; gap:2px 10px; }
+  .item.out { opacity:.6; }
+  .t { font-weight:600; overflow-wrap:anywhere; }
+  .age { font-variant-numeric:tabular-nums; color:var(--muted); white-space:nowrap; }
+  .age.mid { color:var(--mid); } .age.old { color:var(--old); font-weight:600; }
+  .m { grid-column:1 / -1; color:var(--muted); font-size:14px; }
+  .msg { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; color:var(--muted); }
+  mark { background:#fff3a3; color:inherit; border-radius:3px; }
+  @media (prefers-color-scheme: dark) { mark { background:#5a4b00; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>❄️ What's in the freezers</h1>
+  <p class="sub" id="sub">Loading…</p>
+
+  <div class="search"><input id="q" type="search" placeholder="Search, e.g. chicken" autocomplete="off" aria-label="Search food"></div>
+
+  <div class="row" id="freezers" aria-label="Which freezer"></div>
+  <div class="row">
+    <select id="sort" aria-label="Sort">
+      <option value="old">Oldest first</option>
+      <option value="new">Newest first</option>
+      <option value="name">A to Z</option>
+      <option value="freezer">By freezer</option>
+    </select>
+    <label class="small"><input type="checkbox" id="showOut"> Show used up</label>
+  </div>
+
+  <p class="count" id="count"></p>
+  <div id="list"></div>
+</div>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const LS = { get(k){ try { return localStorage.getItem(k); } catch { return null; } },
+               set(k,v){ try { localStorage.setItem(k,v); } catch {} } };
+  const NO_FREEZER = "No freezer set";
+
+  // The key arrives once in the link (#k=...), then stays on this phone.
+  const m = location.hash.match(/[#&][kw]=([\w-]+)/);
+  if (m && m[1] !== "demo") LS.set("fl.key", m[1]);   // key stays in the address so "Open in Chrome" / home-screen icons carry it
+  const key = m ? m[1] : (LS.get("fl.key") || LS.get("fs.key"));
+
+  let items = [], freezer = LS.get("fl.freezer") || "", loadedAt = null;
+  $("sort").value = LS.get("fl.sort") || "old";
+
+  function dateOf(it){ return it.printed || (it.inAt || it.firstSeen || "").slice(0, 10); }
+  function days(it){
+    const d = dateOf(it); if (!d) return null;
+    const n = Math.floor((Date.now() - Date.parse(d + "T00:00:00")) / 864e5);
+    return Number.isFinite(n) ? Math.max(0, n) : null;
+  }
+  function ageText(n){
+    if (n == null) return ["", ""];
+    const cls = n >= 180 ? "old" : n >= 90 ? "mid" : "";
+    if (n < 14) return [cls, n === 0 ? "today" : n + (n === 1 ? " day" : " days")];
+    if (n < 60) return [cls, Math.round(n / 7) + " wks"];
+    const mo = n / 30.4;
+    return [cls, (n < 365 ? Math.round(mo) : mo.toFixed(1)) + " mos"];
+  }
+  function pretty(d){
+    if (!d) return "";
+    const t = new Date(d + "T12:00:00");
+    return isNaN(t) ? d : t.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  }
+  function nameOf(it){ return String(it.text || "").replace(/\s*\/\s*\d{1,2}-\d{1,2}-\d{2,4}\s*$/, "").trim() || "(no name)"; }
+  function where(it){ return it.shelf || NO_FREEZER; }
+
+  function highlight(el, text, q){
+    if (!q) { el.textContent = text; return; }
+    const i = text.toLowerCase().indexOf(q);
+    if (i < 0) { el.textContent = text; return; }
+    const mk = document.createElement("mark"); mk.textContent = text.slice(i, i + q.length);
+    el.append(text.slice(0, i), mk, text.slice(i + q.length));
+  }
+
+  function renderFreezers(){
+    const names = [...new Set(items.filter(it => it.status === "in").map(where))].sort((a, b) => a.localeCompare(b));
+    if (freezer && !names.includes(freezer)) freezer = "";
+    const box = $("freezers"); box.replaceChildren();
+    for (const n of ["", ...names]){
+      const b = document.createElement("button");
+      b.className = "chip"; b.type = "button";
+      b.textContent = n || "All freezers";
+      b.setAttribute("aria-pressed", String(n === freezer));
+      b.onclick = () => { freezer = n; LS.set("fl.freezer", n); render(); };
+      box.append(b);
+    }
+  }
+
+  function row(it, q){
+    const r = document.createElement("div"); r.className = "item" + (it.status === "out" ? " out" : "");
+    const t = document.createElement("span"); t.className = "t"; highlight(t, nameOf(it), q);
+    const [cls, txt] = ageText(days(it));
+    const a = document.createElement("span"); a.className = "age " + cls; a.textContent = it.status === "out" ? "used" : txt;
+    const meta = document.createElement("span"); meta.className = "m";
+    meta.textContent = [where(it), dateOf(it) ? "dated " + pretty(dateOf(it)) : null,
+                        it.status === "out" && it.outAt ? "taken out " + pretty(it.outAt.slice(0, 10)) : null]
+                       .filter(Boolean).join(" · ");
+    r.append(t, a, meta);
+    return r;
+  }
+
+  function render(){
+    renderFreezers();
+    const q = $("q").value.trim().toLowerCase();
+    const sort = $("sort").value, showOut = $("showOut").checked;
+    let list = items.filter(it => (showOut || it.status === "in")
+                               && (!freezer || where(it) === freezer)
+                               && (!q || nameOf(it).toLowerCase().includes(q)));
+    const byAge = (a, b) => (dateOf(a) || "9").localeCompare(dateOf(b) || "9");
+    const cmp = { old: byAge, new: (a, b) => byAge(b, a),
+                  name: (a, b) => nameOf(a).localeCompare(nameOf(b)),
+                  freezer: (a, b) => where(a).localeCompare(where(b)) || byAge(a, b) }[sort];
+    list.sort((a, b) => (a.status === "out") - (b.status === "out") || cmp(a, b));
+
+    const inCount = list.filter(it => it.status === "in").length;
+    $("count").textContent = q || freezer
+      ? `${inCount} found${q ? ` for “${q}”` : ""}${freezer ? ` in ${freezer}` : ""}`
+      : `${inCount} item${inCount === 1 ? "" : "s"} in the freezers`;
+
+    const out = $("list"); out.replaceChildren();
+    if (!list.length) {
+      const d = document.createElement("div"); d.className = "msg";
+      d.textContent = items.length ? "Nothing matches." : "The freezers are empty, or nothing has been scanned yet.";
+      out.append(d); return;
+    }
+    let last = null;
+    for (const it of list){
+      if (sort === "freezer" && it.status === "in" && where(it) !== last){
+        last = where(it);
+        const h = document.createElement("h2"); h.textContent = last; out.append(h);
+      }
+      out.append(row(it, q));
+    }
+  }
+
+  async function load(){
+    if (!key) { $("sub").textContent = "This link is missing its key. Ask for the link again."; return; }
+    try {
+      const r = await fetch("/api/items", { headers: { "x-key": key }, cache: "no-store" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
+      items = Object.entries(j.items).map(([id, it]) => Object.assign({ id }, it));
+      loadedAt = new Date();
+      $("sub").textContent = (j.demo ? "Demo list with sample food · " : "") + "Updated " + loadedAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+      render();
+    } catch (e) {
+      $("sub").textContent = "Couldn't load the list (" + e.message + "). Pull down to try again.";
+    }
+  }
+
+  $("q").addEventListener("input", render);
+  $("sort").addEventListener("change", () => { LS.set("fl.sort", $("sort").value); render(); });
+  $("showOut").addEventListener("change", render);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+  setInterval(() => { if (!document.hidden) load(); }, 60000);
+  load();
+})();
+</script>
+</body>
+</html>

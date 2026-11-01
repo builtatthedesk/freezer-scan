@@ -1,0 +1,693 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>❄️</text></svg>">
+<title>Freezer Scan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one column, scanning console on top (shelf, mode, last scan), inventory by shelf below. */
+:root{
+  --bg:#eef3f6; --surface:#ffffff; --ink:#14212b; --mut:#5b6b78; --line:#cfdae2;
+  --frost:#1f6f99; --frost-ink:#ffffff; --frost-soft:#dcecf5;
+  --ok:#17803d; --ok-soft:#dff3e6; --warn:#a15c00; --warn-soft:#fbefd9;
+  --bad:#b4232c; --bad-soft:#fbe1e3; --out:#6a5aa8; --out-soft:#ebe7f7;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f171d; --surface:#17222b; --ink:#e3ecf2; --mut:#93a5b3; --line:#2a3a46;
+  --frost:#6cb8e0; --frost-ink:#08141b; --frost-soft:#16313f;
+  --ok:#5fd08a; --ok-soft:#14301f; --warn:#f0b05a; --warn-soft:#352612;
+  --bad:#f2777e; --bad-soft:#3a1a1d; --out:#ab9cf0; --out-soft:#241f3d; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f171d; --surface:#17222b; --ink:#e3ecf2; --mut:#93a5b3; --line:#2a3a46;
+  --frost:#6cb8e0; --frost-ink:#08141b; --frost-soft:#16313f;
+  --ok:#5fd08a; --ok-soft:#14301f; --warn:#f0b05a; --warn-soft:#352612;
+  --bad:#f2777e; --bad-soft:#3a1a1d; --out:#ab9cf0; --out-soft:#241f3d; color-scheme:dark}
+*{box-sizing:border-box}
+html,body{background:var(--bg)}
+body{color:var(--ink);font:15px/1.5 var(--body);margin:0}
+.wrap{max-width:860px;margin:0 auto;padding-inline:16px;padding-block:16px 48px;display:grid;gap:16px}
+h1,h2{font-family:var(--display);letter-spacing:.01em;margin:0;text-wrap:balance}
+h1{font-size:1.9rem;font-weight:700}
+h2{font-size:1.35rem;font-weight:700}
+.top{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px}
+.top p{margin:0;color:var(--mut)}
+.console{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px;display:grid;gap:14px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.lbl{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);font-weight:600}
+.shelf{display:grid;gap:2px;min-width:0;flex:1 1 220px}
+.shelf .name{font-family:var(--display);font-size:1.8rem;font-weight:700;line-height:1.1;overflow-wrap:anywhere}
+.shelf .name.none{color:var(--mut);font-weight:500}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+.seg button{border:0;background:transparent;color:var(--ink);font:600 .95rem var(--body);padding:8px 16px;cursor:pointer}
+.seg button[aria-pressed="true"].in{background:var(--frost);color:var(--frost-ink)}
+.seg button[aria-pressed="true"].out{background:var(--out);color:var(--frost-ink)}
+button.primary{background:var(--frost);color:var(--frost-ink);border:0;border-radius:10px;font:600 1rem var(--body);padding:12px 18px;cursor:pointer}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line);border-radius:8px;font:500 .9rem var(--body);padding:7px 12px;cursor:pointer}
+button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid var(--frost);outline-offset:2px}
+button:disabled{opacity:.5;cursor:default}
+.armed{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--ok)}
+.armed .dot{width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px var(--ok-soft)}
+.armed.off{color:var(--warn)} .armed.off .dot{background:var(--warn);box-shadow:0 0 0 4px var(--warn-soft)}
+.last{border-radius:10px;padding:14px 16px;display:grid;gap:4px;background:var(--frost-soft);transition:background .15s}
+.last .what{font-family:var(--display);font-size:1.6rem;font-weight:700;line-height:1.15;overflow-wrap:anywhere}
+.last .why{font-weight:600}
+.last .meta{font-family:var(--mono);font-size:.85rem;color:var(--mut);overflow-wrap:anywhere}
+.last.k-new{background:var(--ok-soft)} .last.k-new .why{color:var(--ok)}
+.last.k-same{background:var(--frost-soft)} .last.k-same .why{color:var(--frost)}
+.last.k-moved,.last.k-loc{background:var(--warn-soft)} .last.k-moved .why,.last.k-loc .why{color:var(--warn)}
+.last.k-out{background:var(--out-soft)} .last.k-out .why{color:var(--out)}
+.last.k-err{background:var(--bad-soft)} .last.k-err .why{color:var(--bad)}
+.manual{display:flex;gap:8px;flex-wrap:wrap}
+.manual input{flex:1 1 220px;min-width:0;font:400 .95rem var(--mono);padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+[hidden]{display:none!important}
+.audit{border:1px dashed var(--warn);border-radius:10px;padding:12px 14px;display:grid;gap:8px;background:var(--warn-soft)}
+.audit ul{margin:0;padding-left:18px}
+.note{font-size:.85rem;color:var(--mut);margin:0}
+.inv{display:grid;gap:12px}
+.group{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.group h3{margin:0;font:700 1.15rem var(--display);padding:10px 14px;background:var(--frost-soft);display:flex;justify-content:space-between;gap:8px}
+.group h3 .n{font-family:var(--mono);font-size:.85rem;font-weight:500;color:var(--mut)}
+.item{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:9px 14px;border-top:1px solid var(--line)}
+.item:first-of-type{border-top:0}
+.item .t{font-weight:600;overflow-wrap:anywhere;min-width:0}
+.item .m{grid-column:1/-1;font-family:var(--mono);font-size:.8rem;color:var(--mut);overflow-wrap:anywhere}
+.age{font-family:var(--mono);font-size:.8rem;padding:1px 8px;border-radius:999px;background:var(--ok-soft);color:var(--ok);white-space:nowrap;align-self:start;font-variant-numeric:tabular-nums}
+.age.mid{background:var(--warn-soft);color:var(--warn)} .age.old{background:var(--bad-soft);color:var(--bad)}
+.empty{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;display:grid;gap:8px}
+.empty ol{margin:0;padding-left:20px;display:grid;gap:4px}
+details.used summary{cursor:pointer;color:var(--mut);font-weight:600}
+.state{font-size:.85rem;color:var(--mut)}
+.state.err{color:var(--bad)}
+code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding:1px 5px;border-radius:4px}
+@media (prefers-reduced-motion:reduce){.last{transition:none}}
+#codes,#test{display:block}
+#codes summary,#test summary{cursor:pointer;font-weight:600;color:var(--mut)}
+.codes{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:8px}
+.codes figure{margin:0;background:#fff;color:#141413;border-radius:8px;padding:8px;text-align:center;font-size:.75rem;overflow-wrap:anywhere}
+.codes img{width:100%;max-width:220px;height:auto;image-rendering:pixelated;display:block;margin:0 auto 4px}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <h1>Freezer Scan</h1>
+    <p>Scan a freezer's label, then the food going in. <a id="labels-link" href="label.html" hidden>Make labels</a></p>
+    <p id="moved" hidden style="background:#fff3cd;color:#664d03;border-radius:10px;padding:10px 12px;font-weight:600">This list has moved to <a href="https://freezer-scan.netlify.app/">freezer-scan.netlify.app</a>. Scan there from now on; scans here are not seen by the family list.</p>
+  </header>
+
+  <section class="console" aria-label="Scanning">
+    <div class="row">
+      <div class="shelf">
+        <span class="lbl">Current freezer</span>
+        <span id="shelf" class="name none">Any freezer (optional)</span>
+      </div>
+      <div class="seg" role="group" aria-label="Mode">
+        <button id="mode-in" class="in" aria-pressed="true" type="button">In</button>
+        <button id="mode-out" class="out" aria-pressed="false" type="button">Out</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <button id="arm" class="primary" type="button">Start scanning</button>
+      <span id="armed" class="armed off"><span class="dot"></span><span id="armed-text">Tap Start so the page can hear the scanner and play sounds</span></span>
+    </div>
+
+    <div id="last" class="last" aria-live="polite">
+      <span class="why" id="last-why">Waiting for the first scan</span>
+      <span class="what" id="last-what">—</span>
+      <span class="meta" id="last-meta"></span>
+    </div>
+
+    <div class="row">
+      <button id="undo" class="ghost" type="button" disabled>Undo last scan</button>
+      <span class="state" id="sync">Connecting to your list…</span>
+    </div>
+
+    <div id="audit" class="audit" hidden>
+      <strong id="audit-title">Not scanned this round</strong>
+      <ul id="audit-list"></ul>
+      <div class="row">
+        <button id="audit-out" class="ghost" type="button">Mark these as used</button>
+      </div>
+      <p class="note">Recorded on this shelf but not scanned since you scanned the shelf label. If you unloaded the whole shelf, these are probably gone.</p>
+    </div>
+
+    <form id="manual" class="manual" autocomplete="off">
+      <label class="lbl" for="manual-in" style="flex-basis:100%">No scanner? Type or paste what a QR code says</label>
+      <input id="manual-in" placeholder="LOC: Garage freezer   or   Lemons | Printed: 2026-10-30 | ID: 261030-001">
+      <button class="ghost" type="submit">Scan this</button>
+    </form>
+
+    <details id="test" class="manual">
+      <summary>Scanner test (nothing is saved while this is open)</summary>
+      <p class="note">Tap Start scanning, open this, then scan any label a few times. It shows exactly what the scanner typed (⏎ = Enter) and how fast.</p>
+      <pre id="test-raw" class="note" style="white-space:pre-wrap;word-break:break-all;margin:6px 0">No scan yet</pre>
+      <div id="test-verdict" class="note"></div>
+      <div class="row">
+        <button id="test-gap" class="ghost" type="button" hidden></button>
+        <span class="state" id="test-gapnow"></span>
+      </div>
+    </details>
+
+    <details id="recent" class="manual">
+      <summary>Recent scans</summary>
+      <ol id="recent-list" class="note" style="margin:6px 0 0;padding-left:20px;display:grid;gap:2px"></ol>
+      <p class="note">Every scan is also kept in a log with your list, so problems can be looked into later.</p>
+    </details>
+
+    <details id="codes" class="manual">
+      <summary>Test &amp; setup codes</summary>
+      <p class="note">Scan these straight off this screen. For the test codes, tap Start scanning first; open Scanner test above if you don't want them saved (the TEST items are safe to keep or delete). Setup codes change the scanner itself; they come from the Tera HW0009 manual.</p>
+      <div class="codes">
+        <figure><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMYAAADGAQAAAACh4MLwAAABAklEQVR42u1YwQ3EMAhDlwE6UlZnpAwQicMmbe/TZ09+hEcUlY9ljCG1eIhpO7Mzr2QM0duweUSeGS0zH3uKf2WALZHE6BGOE5cQwjasjZ6kBS/gUAzbqqYmNlTWQg0b9Ube8tTS29mn/a6sDLaKVgRe7iJTU9CV5hY+rS5KvQAbzi6g/SrpjZLri73zi04vLJER21TyEJzwN2dlE5tJ9QLAcGZRfkK8JWmTFkdsDpBK2OxwtqeXjYSY3oJ647gXwrZs5DidRHCespq1I4XYHjJ/5leI7W+1itQSooattkp4L3tW670AxpyvLVfT22W8UnqrPuVcgMsJ7r37z8LOvJ/5AsZFJAtM5NGgAAAAAElFTkSuQmCC" alt="QR: LOC: Freezer A / Shelf 1"><figcaption><b>1. Shelf</b><br>LOC: Freezer A / Shelf 1</figcaption></figure>
+        <figure><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPYAAAD2AQAAAADNaUdlAAABkElEQVR42u1ZQW4EIQyLygN4El/nSTwAKRvb0Pa018rbQbPSDFxMcByHjXw7djzrz/qHrwfGqN/uM3O2nLkw1Wr9K96Pv14H/sKZa2zi373eoz4174F/RVsjer3ULkbqM4YX/qINtkD+OOI/zP8+DiP85L9SOJDC6cV/6Q8o9PM46Y8GUxj6s39NWuCHbII5IExFXp/bh/+CCs5TPwt/0YnpbMIfIA/pPysva7EP/wMxTyFXFuAgKEQm/M92wdcuEPllFf+ORymcLGHJEpw++ZvyP3kkCPMrjPSTnpm7YC2r+Fvxfx7llObHtaM+/oG0nww7c6Fb1V9WWyKf8j9K6maEn86nHRdk5j+p+ST/eQllRBr5B5KfzmGo+CoFjPy/0raElCo0nfynkLMFvl1wqpc06R9l+FW5aCduI2nUfxE2zf+Nv1n/SyLlbYF1Fkb3D40tTNxG0og/uvDZ5xRoIWD+p9n9G83nublackR+8d9xahnl1Ir/14huNi/hVn/VhamcsaM00//n/51n/f+tvwB/1hsjewKcOQAAAABJRU5ErkJggg==" alt="QR: TEST Lemons | Printed: 2026-10-31 | ID: 261031-901"><figcaption><b>2. Item</b><br>TEST Lemons | Printed: 2026-10-31 | ID: 261031-901</figcaption></figure>
+        <figure><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAPYAAAD2AQAAAADNaUdlAAABl0lEQVR42u1Z243EIBAbXQqgJFpPSSkAifMDonzt78p3QSgi8DM78XhstubHMeo9f8//+Hlx9Hn1Y56YE/Pi1oHzn/o8vn3O+BEngh8Ni7Ma1oVX72fEf9XB+JH2rg/BVyyy4gds+BMEocT4gR9BaL0mxS/8s3KFoqFaDsK/+Qc5f8wk/llDOSeKHpsh+CFmqoE8T1EoZ1D8SDjSrkIm/oufoIuIYvBzF/JQLWCOHPyXmJNrlQBRhPoVhFLiV+ctKx9m3s8c/lzgadZvc6oFx9SvepbSjmdX/y2quKD+S/GjJ7a8yMG/0EIKLU99iGox+kGc78nfshdJ/deE7xY2l5YO8i9dsFkWYIj/jxz9KcHMtqsu1iUnzhnEn+pcY2uG5QJaDP7teSXbyrSJ/ZHjv1yqUg7dtSzwx/D/8u9svnVrOXmBJP9V7rzbOR45+t/+dzl3e3lfBIXdPwhIu3MF6f/7/mdpHkugHPw4/nWFOK3fKkn/PPJvOrV/ibt/thCVeKhK6r+6c2irircRCPIv7/877/n/PP8FuNQyM4xYeS4AAAAASUVORK5CYII=" alt="QR: TEST Chicken thighs | Printed: 2026-10-31 | ID: 261031-902"><figcaption><b>3. Item</b><br>TEST Chicken thighs | Printed: 2026-10-31 | ID: 261031-902</figcaption></figure>
+        <figure><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAK4AAACuAQAAAACHdwtDAAAAy0lEQVR42u2X0QnDMAxERTWAR/LqGskDCNSTbEMp6Wc5f1iE4NxPDuudnEg8lcuVr/wtS1Z36TpypZBf8lj/lNMJXh2jz/t8pDkZounE4ASbQ3dS3TnCSS3YThYhpmxOZnYSFXZ2dqA/1iQn8ABcY0i1SYJJbOLhLdF1MrFgdbVGWlA5MRiImmzkPakxUoSYUoldfUE1S3TZ88TXdcBZjO5UkA85dyYqXCeIjycn3Mm2v0/2IcjlBMHR+eXGz06mOOcbe57cv4wr/5bfxAhAr6PRI9sAAAAASUVORK5CYII=" alt="QR: CMD: TAKE OUT"><figcaption><b>4. Door</b><br>CMD: TAKE OUT</figcaption></figure>
+        <figure><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAK4AAACuAQAAAACHdwtDAAAAyElEQVR42u2XvQ2FMAyErecBGCmrZ6QMEMnPZxsKBCW6FIlchGv4dP4DsaczZctbvsuC0+ZhNnBTl3/yeL6UQeKvtuEkXUfLRxrJEGcQeNLcHDqJJc8CJGCgk0SdaAS3TrJ3goTcO9XQR5iTdxIJGCI1VyMTs+MMZoiZbCySsGJGhWCqMEkq1G0Z3GkPT7RS0+m9oxXd2PPkGm78XSwNTUTtndw7WScrbECfb8Ku2PoqOAeL0XdxuLHCLkatnjzcebL/Mrb8Lv8BkCY2a1ejfmYAAAAASUVORK5CYII=" alt="QR: CMD: PUT IN"><figcaption><b>5. Door</b><br>CMD: PUT IN</figcaption></figure>
+      </div>
+      <p class="lbl" style="margin-top:8px">Scanner setup</p>
+      <div class="codes">
+        <figure><img src="data:image/png;base64,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" alt="Bluetooth HID setup code"><figcaption><b>Bluetooth HID</b></figcaption></figure>
+        <figure><img src="data:image/png;base64,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" alt="Pairing setup code"><figcaption><b>Pairing</b></figcaption></figure>
+        <figure><img src="data:image/png;base64,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" alt="Real Time Mode (live scanning) setup code"><figcaption><b>Real Time Mode (live scanning)</b></figcaption></figure>
+      </div>
+      <p class="note">To pair: scan Bluetooth HID, then Pairing, then pick &ldquo;BarCode Scanner HID&rdquo; in the phone's Bluetooth list (or hold the trigger 8 s instead of the codes).</p>
+    </details>
+  </section>
+
+  <section aria-label="What's in the freezer">
+    <div class="top"><h2>What's where</h2><span class="state" id="totals"></span></div>
+    <div id="inv" class="inv">
+      <div class="empty">
+        <strong>Nothing recorded yet.</strong>
+        <ol>
+          <li>Tap <b>Start scanning</b> and scan what goes in. That's it.</li>
+          <li>Pair a Bluetooth barcode scanner with this phone or PC and tap <b>Start scanning</b>.</li>
+          <li>Optional: print shelf labels (tick <b>Shelf label</b> in the label app). Scan one and the items after it are listed under that shelf.</li>
+          <li>No phone at the freezer? Put the scanner in <b>Storage Mode</b>, scan away, then open this page, tap Start scanning and scan <b>Upload All Stored Codes</b>. Afterwards scan <b>Clear All Stored Codes</b> so they aren't uploaded twice.</li>
+          <li>Print a <b>TAKE OUT</b> and a <b>PUT IN</b> label (<code>text "TAKE OUT" --command</code>) for the freezer door. Scan TAKE OUT, then what you take.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const LS = { get(k){ try { return localStorage.getItem(k); } catch { return null; } },
+               set(k,v){ try { localStorage.setItem(k,v); } catch {} } };
+
+  // ---------------------------------------------------------------- state
+  let db = null, writable = true;
+  let items = new Map();            // doc id -> body
+  let shelf = LS.get("fs.shelf") || "";
+  let mode = "in";                   // Out never survives a reload or a quiet spell
+  const OUT_IDLE_MS = 90e3;          // back to In after this long without a scan
+  let outTimer = 0, outLast = 0;     // timers stall while a phone sleeps; outLast is the real clock
+  let roundStart = Number(LS.get("fs.round")) || 0;   // when the shelf label was scanned
+  let undo = null;                   // {id, before}
+  let writing = Promise.resolve();   // one write at a time
+
+  // ---------------------------------------------------------------- sound
+  let ac = null;
+  function tone(seq){
+    if (!ac) return;
+    let t = ac.currentTime + 0.01;
+    for (const [f, d, type] of seq){
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = type || "square"; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.25, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+      o.connect(g).connect(ac.destination); o.start(t); o.stop(t + d + 0.02);
+      t += d + 0.04;
+    }
+  }
+  const SOUNDS = {
+    new:   [[1568, .09]],                                  // one bright beep
+    same:  [[880, .06], [880, .06]],                       // two short: already here
+    moved: [[784, .08], [1175, .12]],                      // rising: moved shelves
+    loc:   [[659, .07], [880, .07], [1319, .14]],          // chime: shelf set
+    out:   [[1175, .08], [784, .12]],                      // falling: taken out
+    modeOut: [[988, .1], [659, .1], [440, .18]],           // long fall: take-out mode on
+    modeIn:  [[440, .1], [659, .1], [988, .18]],           // long rise: back to put-in
+    err:   [[180, .35, "sawtooth"]],                       // buzz: not understood
+  };
+  function feedback(kind){
+    tone(SOUNDS[kind] || SOUNDS.err);
+    try { navigator.vibrate && navigator.vibrate(kind === "err" ? [120, 60, 120] : 40); } catch {}
+  }
+
+  // ---------------------------------------------------------------- parsing
+  // Label QR (from ql-label-print): "<words>\nPrinted: YYYY-MM-DD\nID: YYMMDD-NNN".
+  // Scanners type each line break as Enter (or drop it), so match by pattern,
+  // not by line.
+  function parse(raw){
+    const s = raw.replace(/\r\n?/g, "\n").trim();
+    if (!s) return null;
+    const loc = s.match(/^LOC:\s*(.+)$/s);
+    const cmd = s.match(/^CMD:\s*(.+)$/s);
+    if (cmd){
+      const c = cmd[1].replace(/\s+/g, " ").trim().toUpperCase();
+      return { kind: "cmd", name: c,
+               mode: /^(TAKE )?OUT$/.test(c) ? "out" : /^(PUT )?IN$/.test(c) ? "in" : null };
+    }
+    if (loc) return { kind: "loc", name: loc[1].replace(/\s*\n\s*/g, " ").trim() };
+    const id = s.match(/ID:\s*(\d{6}-\d{3,})/);
+    const printed = s.match(/Printed:\s*(\d{4}-\d{2}-\d{2})/);
+    if (!id && !printed) return { kind: "unknown", raw: s };
+    let text = s.replace(/ID:\s*\d{6}-\d{3,}/, "").replace(/Printed:\s*\d{4}-\d{2}-\d{2}/, "");
+    text = text.split(/[\n|]+/).map(x => x.trim()).filter(Boolean).join(" / ");
+    return { kind: "item", id: id ? id[1] : null, printed: printed ? printed[1] : null, text: text || "(no words)" };
+  }
+  // The scanner's Storage Mode uploads every stored scan in one fast burst, so a
+  // single "scan" can hold many labels. Cut it where a label must end: a LOC: or
+  // CMD: line stands alone; an item ends at its ID (or at Printed: with no ID after).
+  function splitLabels(raw){
+    const lines = raw.replace(/\r\n?/g, "\n").split("\n").map(x => x.trim()).filter(Boolean);
+    const out = []; let cur = [];
+    const flush = () => { if (cur.length) out.push(cur.join("\n")); cur = []; };
+    lines.forEach((l, i) => {
+      if (/^(LOC|CMD):/.test(l)) { flush(); out.push(l); return; }
+      cur.push(l);
+      if (/ID:\s*\d{6}-\d{3,}/.test(l)) flush();
+      else if (/Printed:\s*\d{4}-\d{2}-\d{2}/.test(l) && !/^ID:/.test(lines[i + 1] || "")) flush();
+    });
+    flush();
+    return out;
+  }
+  // Run every label in a scan; a burst gets one summary instead of a beep per label.
+  let batch = null;
+  function handleAll(raw){
+    const parts = splitLabels(raw);
+    if (parts.length <= 1) return handle(raw);
+    batch = { n: 0, counts: {} };
+    for (const part of parts) handle(part);
+    const b = batch; batch = null;
+    const names = { new: "added", same: "already there", moved: "moved", out: "taken out", err: "not recorded", loc: "shelf set", modeOut: "take-out on", modeIn: "put-in on" };
+    const summary = Object.entries(b.counts).map(([k, v]) => `${v} ${names[k] || k}`).join(" · ");
+    show(b.counts.err ? "err" : "new", `Uploaded ${parts.length} stored scans`, summary, b.counts.err ? "Some scans were not recorded: check the list, or scan those again" : "From the scanner's memory");
+  }
+  function docIdFor(p){
+    if (p.id) return p.id;
+    let h = 2166136261;                 // older labels without an ID: stable hash of words + date
+    for (const c of p.text + "|" + (p.printed || "")) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); }
+    return "noid-" + (h >>> 0).toString(36);
+  }
+
+  // ---------------------------------------------------------------- scanner input
+  // A keyboard-mode scanner types fast; a pause ends the scan.
+  let buf = "", timer = 0, armed = false, stamps = [];
+  // A Bluetooth scanner (the Tera HW0009) types ~35 chars/s with pauses up to ~120 ms,
+  // longest at line breaks, so 300 ms is the default end-of-scan pause.
+  const GAP_DEFAULT = 300, GAP_INCOMPLETE = 1200;
+  let gapMs = Math.min(800, Math.max(GAP_DEFAULT, Number(LS.get("fs.gap")) || GAP_DEFAULT));
+  // Half a label so far (a food name with no Printed:/ID: yet, or a Printed: line
+  // whose ID may follow)? Then wait longer before calling the scan finished.
+  function looksIncomplete(b){
+    const t = b.trim();
+    if (!t || /^(LOC|CMD):/.test(t)) return false;
+    if (/ID:\s*\d{6}-\d{3,}\s*$/.test(t)) return false;
+    if (/Printed:\s*\d{4}-\d{2}-\d{2}\s*$/.test(t)) return true;
+    return !/Printed:|ID:/.test(t);
+  }
+  function onKey(e){
+    if (!armed || e.target === $("manual-in")) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "Enter") { buf += "\n"; e.preventDefault(); }
+    else if (e.key === "Tab") { buf += "\n"; e.preventDefault(); }
+    else if (e.key.length === 1) { buf += e.key; e.preventDefault(); }
+    else return;
+    stamps.push(performance.now());
+    clearTimeout(timer);
+    timer = setTimeout(() => { const s = buf, t = stamps; buf = ""; stamps = []; route(s, t); },
+                       looksIncomplete(buf) ? GAP_INCOMPLETE : gapMs);
+  }
+  // Scanner test: show what arrived instead of recording it.
+  function route(s, t){
+    if (!$("test").open) return handleAll(s);
+    lastRaw = s;
+    setTimeout(() => logEvent("test", "Scanner test", $("test-verdict").textContent.slice(0, 120), ""), 0);
+    let maxGap = 0;
+    for (let i = 1; i < t.length; i++) maxGap = Math.max(maxGap, t[i] - t[i - 1]);
+    const dur = t.length > 1 ? t.at(-1) - t[0] : 0;
+    $("test-raw").textContent = s.replace(/\n/g, "⏎\n");
+    const parts = splitLabels(s);
+    if (parts.length > 1) {
+      $("test-raw").textContent = s.replace(/\n/g, "⏎\n");
+      $("test-verdict").textContent = `This was an upload of ${parts.length} stored scans: ` +
+        parts.map(x => { const q = parse(x); return q && q.kind !== "unknown" ? "✓ " + (q.kind === "item" ? q.text : q.name) : "✗ " + x.slice(0, 30); }).join(" · ");
+      return feedback(parts.every(x => (parse(x) || {}).kind !== "unknown") ? "new" : "err");
+    }
+    const p = parse(s), v = [];
+    v.push(`${s.length} characters in ${Math.round(dur)} ms` + (dur ? ` (${Math.round(s.length / dur * 1000)}/s)` : "") + `, longest pause ${Math.round(maxGap)} ms.`);
+    if (p && p.kind !== "unknown") v.push(`✓ Understood as ${p.kind === "item" ? "an item: " + p.text + (p.id ? " (ID " + p.id + ")" : "") : p.kind === "loc" ? "a freezer: " + p.name : "a command: " + p.name}.`);
+    else if (/(ID|Printed|LOC|CMD)[;Ñ:]?/i.test(s) && !/(ID|Printed|LOC|CMD):/.test(s))
+      v.push("✗ The colons came through wrong: the scanner and this device disagree on keyboard layout. Set both to US English.");
+    else if (/^[A-Z0-9 ;\-]+$/.test(s) && /[a-z]/i.test(s) && s === s.toUpperCase() && s.length > 8)
+      v.push("✗ Everything arrived in capitals: Caps Lock is on, or the scanner is set to force upper case.");
+    else v.push("✗ Not one of your labels (or the scan was cut short).");
+    if (!/\n/.test(s)) v.push("No Enter at all in this scan. That's fine for your labels; the page doesn't need line breaks.");
+    $("test-verdict").textContent = v.join(" ");
+    const want = Math.min(800, Math.max(GAP_DEFAULT, Math.ceil(maxGap * 2.5 / 10) * 10));
+    $("test-gap").hidden = want <= gapMs;
+    $("test-gap").textContent = `Scans may be getting cut in two: wait ${want} ms before ending a scan`;
+    $("test-gap").onclick = () => { gapMs = want; LS.set("fs.gap", String(want)); showGap(); $("test-gap").hidden = true; };
+    feedback(p && p.kind !== "unknown" ? "new" : "err");
+  }
+  function showGap(){ $("test-gapnow").textContent = `A scan ends after a ${gapMs} ms pause` + (gapMs > GAP_DEFAULT ? " (raised for this scanner)" : "") + `, or ${GAP_INCOMPLETE} ms while a label is only half read`; }
+  showGap();
+  document.addEventListener("keydown", onKey, true);
+  document.addEventListener("paste", (e) => {
+    if (!armed || e.target === $("manual-in")) return;
+    const s = (e.clipboardData && e.clipboardData.getData("text")) || "";
+    if (s) { e.preventDefault(); route(s, []); }
+  });
+
+  function setArmed(on, msg){
+    armed = on;
+    $("armed").classList.toggle("off", !on);
+    $("armed-text").textContent = msg;
+    $("arm").textContent = on ? "Scanning" : "Start scanning";
+  }
+  $("arm").addEventListener("click", async () => {
+    armed = true;                                // listen at once; sound setup can take a moment
+    try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); await ac.resume(); } catch {}
+    try { navigator.wakeLock && await navigator.wakeLock.request("screen"); } catch {}
+    $("arm").blur();
+    setArmed(true, "Listening. Pull the trigger.");
+    feedback("loc");
+  });
+  window.addEventListener("blur", () => {
+    if (mode === "out") setMode("in");         // coming back should never still be taking out
+    if (armed) setArmed(false, "Paused: tap Start again (the page lost focus)");
+  });
+
+  $("manual").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = $("manual-in").value.replace(/\s*\|\s*/g, "\n");
+    $("manual-in").value = "";
+    if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
+    handleAll(v);
+  });
+
+  // ---------------------------------------------------------------- modes
+  function setMode(m){
+    mode = m;
+    $("mode-in").setAttribute("aria-pressed", String(m === "in"));
+    $("mode-out").setAttribute("aria-pressed", String(m === "out"));
+    clearTimeout(outTimer);
+    outLast = Date.now();
+    if (m === "out") outTimer = setTimeout(() => {
+      setMode("in");
+      show("modeIn", "Back to putting in", "Put in", "No scan for 90 s, so Take out turned itself off");
+    }, OUT_IDLE_MS);
+  }
+  $("mode-in").addEventListener("click", () => setMode("in"));
+  $("mode-out").addEventListener("click", () => setMode("out"));
+
+  // ---------------------------------------------------------------- scans
+  // ---------------------------------------------------------------- scan log
+  // Every scan's raw text and outcome goes to the db collection "scanlog" (queued
+  // on this device until the list is connected), so a bad scan can be diagnosed
+  // later without the person having to remember what the screen said.
+  let lastRaw = "", recent = [];
+  const LOGQ = "fs.logq";
+  function queued(){ try { return JSON.parse(LS.get(LOGQ) || "[]"); } catch { return []; } }
+  function logEvent(kind, why, what, meta){
+    const e = { at: new Date().toISOString(), kind, why, what: String(what || "").slice(0, 120), meta: meta || "",
+                raw: lastRaw.slice(0, 300), test: $("test").open, mode, shelf, connected: !!db,
+                device: (navigator.userAgent.match(/\(([^)]+)\)/) || [, ""])[1].slice(0, 80) };
+    recent.unshift(e); recent = recent.slice(0, 20); renderRecent();
+    const q = queued(); q.push(e); LS.set(LOGQ, JSON.stringify(q.slice(-200)));
+    flushLog();
+  }
+  let flushing = false;
+  async function flushLog(){
+    if (!db || flushing) return;
+    flushing = true;
+    try {
+      let q = queued();
+      while (q.length){
+        const e = q[0];
+        await db.collection("scanlog").doc(e.at.replace(/[^0-9]/g, "") + "-" + Math.random().toString(36).slice(2, 6)).set(e);
+        q = queued().slice(1); LS.set(LOGQ, JSON.stringify(q));
+      }
+    } catch {} finally { flushing = false; }
+  }
+  function renderRecent(){
+    const ol = $("recent-list"); ol.replaceChildren();
+    for (const e of recent){
+      const li = document.createElement("li");
+      li.textContent = `${e.at.slice(11, 19)}  ${e.test ? "[test] " : ""}${e.why}: ${e.what}`;
+      ol.append(li);
+    }
+  }
+  window.addEventListener("error", (ev) => { lastRaw = ""; logEvent("pageError", "Page error", ev.message, (ev.filename || "") + ":" + (ev.lineno || "")); });
+
+  function show(kind, why, what, meta){
+    logEvent(kind, why, what, meta);
+    if (batch) { batch.counts[kind] = (batch.counts[kind] || 0) + 1; return; }
+    const el = $("last");
+    el.className = "last k-" + ({ modeOut: "out", modeIn: "loc" }[kind] || kind);
+    $("last-why").textContent = why;
+    $("last-what").textContent = what;
+    $("last-meta").textContent = meta || "";
+    feedback(kind === "loc" ? "loc" : kind);
+  }
+
+  function handle(raw){
+    lastRaw = raw;
+    const p = parse(raw);
+    if (!p) return;
+    if (mode === "out") setMode(Date.now() - outLast > OUT_IDLE_MS ? "in" : "out");  // a scan keeps it alive
+    if (p.kind === "cmd"){
+      if (!p.mode) return show("err", "Unknown command label", p.name, "This page knows TAKE OUT and PUT IN");
+      setMode(p.mode);
+      return p.mode === "out"
+        ? show("modeOut", "Take out: on", "Scan what you're taking", "Turns itself off after 90 s without a scan")
+        : show("modeIn", "Putting in", shelf || "Scan what goes in", shelf ? "Items scanned next go in this freezer" : "");
+    }
+    if (p.kind === "unknown") return show("err", "Not one of your labels", p.raw.slice(0, 80), "No ID or print date in this code");
+    if (p.kind === "loc"){
+      setMode("in");                             // a shelf label always means putting in
+      shelf = p.name; roundStart = Date.now();
+      LS.set("fs.shelf", shelf); LS.set("fs.round", String(roundStart));
+      renderShelf(); renderAudit();
+      return show("loc", "Freezer set", shelf, "Items scanned next go here");
+    }
+    if (window.claude) return show("err", "This page has moved", p.text, "Nothing saved here. Use freezer-scan.netlify.app");
+    if (!db) return show("err", "Your list isn't connected", p.text, window.claude ? "Nothing was saved. Open this page from claude.ai, signed in." : "Nothing was saved. Open the page from your scanning link.");
+    if (!writable) return show("err", "You can't change this list", p.text, "Ask the owner for edit access");
+    const id = docIdFor(p);
+    const before = items.get(id) || null;
+    const now = new Date().toISOString();
+    const meta = [p.id ? "ID " + p.id : "no ID on label", p.printed ? "printed " + p.printed : null].filter(Boolean).join(" · ");
+
+    if (mode === "out"){
+      if (!before || before.status === "out") return show("err", before ? "Already marked used" : "Not on your list", p.text, meta);
+      save(id, before, Object.assign({}, before, { status: "out", outAt: now, lastScan: now }));
+      return show("out", "Taken out", p.text, meta + " · was in " + (before.shelf || "no freezer set"));
+    }
+    const where = shelf || (before && before.status === "in" && before.shelf) || "";   // no shelf scanned: keep where it was
+    const body = { text: p.text, labelId: p.id, printed: p.printed, shelf: where, status: "in",
+                   inAt: before && before.status === "in" ? before.inAt : now,
+                   firstSeen: before ? before.firstSeen : now, lastScan: now };
+    save(id, before, body);
+    if (!before) return show("new", where ? "Added to " + where : "Added", p.text, meta);
+    if (before.status === "out") return show("new", where ? "Back in, in " + where : "Back in", p.text, meta);
+    if (shelf && before.shelf !== shelf) return show("moved", before.shelf ? "Moved from " + before.shelf : "Now in " + shelf, p.text, meta);
+    return show("same", "Already in this freezer", p.text, meta);
+  }
+
+  function save(id, before, body){
+    items.set(id, body);                         // show it now; the snapshot confirms
+    undo = { id, before };
+    $("undo").disabled = false;
+    render();
+    const ref = db.collection("items").doc(id);
+    writing = writing.then(() => ref.set(body)).catch((e) => {
+      if (e && e.code === "invalid_argument") { writable = false; }
+      $("sync").textContent = "Couldn't save the last scan (" + ((e && e.message) || "error") + ")";
+      $("sync").classList.add("err");
+      feedback("err");
+    });
+  }
+
+  $("undo").addEventListener("click", () => {
+    if (!undo || !db) return;
+    const { id, before } = undo; undo = null; $("undo").disabled = true;
+    const ref = db.collection("items").doc(id);
+    if (before) { items.set(id, before); writing = writing.then(() => ref.set(before)); }
+    else { items.delete(id); writing = writing.then(() => ref.delete()); }
+    writing = writing.catch(() => {});
+    render();
+    show("same", "Undone", (before && before.text) || "Removed the last item", "");
+  });
+
+  $("audit-out").addEventListener("click", () => {
+    const now = new Date().toISOString();
+    for (const [id, it] of missing()) save(id, it, Object.assign({}, it, { status: "out", outAt: now }));
+    undo = null; $("undo").disabled = true;
+    renderAudit();
+  });
+
+  // ---------------------------------------------------------------- render
+  function ageOf(it){
+    const d = it.printed || (it.firstSeen || "").slice(0, 10);
+    if (!d) return null;
+    const days = Math.floor((Date.now() - Date.parse(d + "T00:00:00")) / 864e5);
+    return Number.isFinite(days) ? Math.max(0, days) : null;
+  }
+  function ageLabel(days){
+    if (days == null) return ["", "?"];
+    const cls = days >= 180 ? "old" : days >= 90 ? "mid" : "";
+    if (days < 14) return [cls, days + " d"];
+    if (days < 60) return [cls, Math.round(days / 7) + " wk"];
+    return [cls, (days / 30.4).toFixed(days < 365 ? 0 : 1) + " mo"];
+  }
+  function missing(){
+    return [];   // recount check off: freezers get partial scans, so "not scanned" meant nothing
+    if (!shelf || !roundStart) return [];
+    return [...items].filter(([, it]) => it.status === "in" && it.shelf === shelf &&
+                                         Date.parse(it.lastScan || 0) < roundStart);
+  }
+  function renderShelf(){
+    $("shelf").textContent = shelf || "Any freezer (optional)";
+    $("shelf").classList.toggle("none", !shelf);
+  }
+  function renderAudit(){
+    const m = missing();
+    const scannedThisRound = [...items.values()].some(it => it.shelf === shelf && Date.parse(it.lastScan || 0) >= roundStart);
+    $("audit").hidden = !(m.length && scannedThisRound);
+    $("audit-title").textContent = m.length + " not scanned this round on " + shelf;
+    const ul = $("audit-list"); ul.replaceChildren();
+    for (const [, it] of m){ const li = document.createElement("li"); li.textContent = it.text + (it.labelId ? "  (" + it.labelId + ")" : ""); ul.append(li); }
+  }
+  function render(){
+    renderAudit();
+    const inv = $("inv");
+    const live = [...items].filter(([, it]) => it.status === "in");
+    const used = [...items].filter(([, it]) => it.status === "out");
+    $("totals").textContent = items.size ? live.length + " in · " + used.length + " used" : "";
+    if (!items.size) return;
+    const groups = new Map();
+    for (const [id, it] of live){ const k = it.shelf || "In the freezer"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push([id, it]); }
+    const frag = document.createDocumentFragment();
+    for (const name of [...groups.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))){
+      const g = document.createElement("div"); g.className = "group";
+      const list = groups.get(name).sort((a, b) => (ageOf(b[1]) ?? -1) - (ageOf(a[1]) ?? -1));
+      const h = document.createElement("h3");
+      h.append(name); const n = document.createElement("span"); n.className = "n"; n.textContent = list.length + " item" + (list.length === 1 ? "" : "s"); h.append(n);
+      g.append(h);
+      for (const [id, it] of list) g.append(itemRow(id, it));
+      frag.append(g);
+    }
+    if (used.length){
+      const d = document.createElement("details"); d.className = "used";
+      const s = document.createElement("summary"); s.textContent = used.length + " used / taken out"; d.append(s);
+      const g = document.createElement("div"); g.className = "group";
+      for (const [id, it] of used.sort((a, b) => (b[1].outAt || "").localeCompare(a[1].outAt || ""))) g.append(itemRow(id, it, true));
+      d.append(g); frag.append(d);
+    }
+    inv.replaceChildren(frag);
+  }
+  function itemRow(id, it, used){
+    const r = document.createElement("div"); r.className = "item";
+    const t = document.createElement("span"); t.className = "t"; t.textContent = it.text;
+    const [cls, txt] = ageLabel(ageOf(it));
+    const a = document.createElement("span"); a.className = "age " + cls; a.textContent = txt;
+    a.title = "Time since printed";
+    const m = document.createElement("span"); m.className = "m";
+    m.textContent = [it.labelId || "no ID", it.printed ? "printed " + it.printed : null,
+                     used && it.outAt ? "out " + it.outAt.slice(0, 10) + (it.shelf ? " from " + it.shelf : "") : null]
+                    .filter(Boolean).join(" · ");
+    r.append(t, a, m);
+    return r;
+  }
+
+  // ---------------------------------------------------------------- store
+  // On the website the list lives behind /api, opened with the write key from the
+  // link (#w=KEY), kept on this phone afterwards. Same calls as the claude.ai db.
+  async function siteDb(){
+    const m = location.hash.match(/[#&]w=([\w-]+)/);
+    if (m && m[1] !== "demo") LS.set("fs.key", m[1]);   // key stays in the address so "Open in Chrome" / home-screen icons carry it
+    const key = m ? m[1] : LS.get("fs.key");
+    if (!key) {
+      $("sync").textContent = "This page needs your scanning link (the one ending in #w=…).";
+      $("inv").innerHTML = '<div class="empty"><strong>Your list is not loaded.</strong> This page was opened without its key. Open the full scanning link (the one ending in #w=…) once on this phone; after that the plain address works too.</div>';
+      return null;
+    }
+    const api = (method, path, body) => fetch("/api/" + path, {
+      method, headers: { "x-key": key, "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }).then(async (r) => {
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { const e = new Error(j.error || "HTTP " + r.status); e.code = r.status === 403 ? "invalid_argument" : String(r.status); throw e; }
+      return j;
+    });
+    let gen = 0, pending = 0, poll = () => {};
+    const write = (pr) => { gen++; pending++; return pr.finally(() => { pending--; gen++; poll(); }); };
+    const first = await api("GET", "items").catch(() => null);
+    if (first && !first.canWrite) writable = false;
+    if (first && first.demo) { const d = $("moved"); d.textContent = "Demo: a sample list anyone can try. Type a label into the box below to scan without a scanner, e.g. LOC: Garage freezer, then Chicken soup | Printed: 2026-10-01 | ID: 261001-001. It resets every day."; d.hidden = false; }
+    return { collection: (name) => ({
+      doc: (id) => ({
+        set: (d) => name === "items" ? write(api("PUT", "items/" + encodeURIComponent(id), d)) : api("POST", "log", d),
+        delete: () => write(api("DELETE", "items/" + encodeURIComponent(id))),
+      }),
+      onSnapshot(cb, onErr){
+        const snap = (items) => cb({ docs: Object.entries(items).map(([id, d]) => ({ id, data: () => d })), metadata: { fromCache: false } });
+        // A poll that overlaps a write could bring back the list from before it; drop those.
+        poll = async () => {
+          const g = gen;
+          try { const j = await api("GET", "items"); if (g === gen && !pending) snap(j.items); }
+          catch (e) { onErr && onErr(e); }
+        };
+        if (first) snap(first.items); else poll();
+        setInterval(() => { if (!document.hidden) poll(); }, 15000);
+        document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+      },
+    }) };
+  }
+
+  renderShelf(); setMode(mode);
+  if (!window.claude) { $("labels-link").hidden = false; if (location.hash) $("labels-link").href = "label.html" + location.hash; }
+  if (window.claude) $("moved").hidden = false;
+  (async () => {
+    const loading = setTimeout(() => { $("sync").textContent = "Can't reach your list yet. Scans will show here but may not save."; }, 10000);
+    db = window.claude && window.claude.use ? await window.claude.use("db") : null;
+    if (!db && !window.claude) db = await siteDb();      // on the website, not claude.ai
+    if (!db){ clearTimeout(loading); if (window.claude) $("sync").textContent = "Not connected: open this page on claude.ai, signed in, to save scans."; $("sync").classList.add("err"); return; }
+    if (window.claude) try { const user = await window.claude.use("user"); if (user && (await user.can("data.write")) === false) writable = false; } catch {}
+    flushLog();
+    db.collection("items").onSnapshot((snap) => {
+      if (!snap.metadata.fromCache) clearTimeout(loading);
+      const next = new Map();
+      for (const d of snap.docs) next.set(d.id, d.data());
+      items = next;
+      $("sync").classList.remove("err");
+      $("sync").textContent = writable ? (snap.metadata.fromCache ? "Showing saved copy…" : "Saved to your list") : "View only";
+      render();
+    }, (e) => {
+      clearTimeout(loading);
+      $("sync").textContent = window.claude ? "Lost connection to your list (" + e.code + "). Reload to reconnect." : "Can't reach your list right now (" + e.message + "). Retrying…";
+      $("sync").classList.add("err");
+    });
+  })();
+})();
+</script>
+</body>
+</html>

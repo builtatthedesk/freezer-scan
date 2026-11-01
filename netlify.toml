@@ -1,0 +1,28 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+# Asked for when someone uses the "Deploy to Netlify" button.
+[template.environment]
+  WRITE_KEY = "Scanning password: letters, numbers and dashes only, at least 16 characters"
+  READ_KEY = "Viewing password for the family list: letters, numbers and dashes only, at least 16 characters"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Referrer-Policy = "no-referrer"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
+
+[[headers]]
+  for = "/list.html"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
+
+[[headers]]
+  for = "/label.html"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
