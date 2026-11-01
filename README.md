@@ -11,7 +11,7 @@ a Bluetooth barcode scanner, and everyone in the house sees the list on their ph
 
 | Path | What it is |
 |---|---|
-| `public/index.html` | Scanning page. The scanner types each QR code like a keyboard; the page tells labels apart by the pause after a scan. |
+| `public/index.html` | Scanning page. A Bluetooth scanner types each QR code like a keyboard (the page tells labels apart by the pause after a scan), or tap **Scan with camera** to use the phone's camera. |
 | `public/list.html` | Read-only family list: search, sort, filter by freezer. |
 | `public/label.html` | Label maker for 29 × 90 mm labels (Brother DK-1201). Print from a computer or save images. |
 | `public/how.html` | The plain-English how-to page. |
@@ -65,3 +65,6 @@ netlify dev
 ## Licence
 
 MIT. Built at the Desk.
+
+Bundled: `public/qrcode.js` ([qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator), MIT) and
+`public/jsqr.js` ([jsQR](https://github.com/cozmo/jsQR), Apache-2.0).

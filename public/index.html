@@ -57,6 +57,17 @@ button:disabled{opacity:.5;cursor:default}
 .armed{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--ok)}
 .armed .dot{width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px var(--ok-soft)}
 .armed.off{color:var(--warn)} .armed.off .dot{background:var(--warn);box-shadow:0 0 0 4px var(--warn-soft)}
+.camview{position:fixed;inset:0;z-index:50;background:#0b0f14;color:#fff;display:flex;flex-direction:column;gap:10px;padding:10px 12px calc(12px + env(safe-area-inset-bottom))}
+.camview .cam-box{position:relative;flex:1 1 auto;min-height:0;border-radius:12px;overflow:hidden;background:#000}
+.camview video{width:100%;height:100%;object-fit:cover;display:block}
+.camview .cam-aim{position:absolute;left:50%;top:50%;width:min(62vw,62vh);aspect-ratio:1;transform:translate(-50%,-50%);border:3px solid rgba(255,255,255,.85);border-radius:14px;box-shadow:0 0 0 100vmax rgba(0,0,0,.35);pointer-events:none}
+.camview .cam-aim.hit{border-color:#3ddc84}
+.camview .cam-tip{position:absolute;left:0;right:0;bottom:10px;text-align:center;font-weight:600;text-shadow:0 1px 3px #000}
+.camview .cam-slot{display:grid;gap:10px;color:var(--ink)}
+.camview .cam-slot .row{background:var(--surface);border-radius:10px;padding:8px 12px}
+.camview .cam-bar{display:flex;gap:10px;justify-content:space-between}
+.camview .cam-bar button{min-height:46px;flex:1}
+.camview .cam-bar .ghost{color:#fff;border-color:rgba(255,255,255,.5)}
 .last{border-radius:10px;padding:14px 16px;display:grid;gap:4px;background:var(--frost-soft);transition:background .15s}
 .last .what{font-family:var(--display);font-size:1.6rem;font-weight:700;line-height:1.15;overflow-wrap:anywhere}
 .last .why{font-weight:600}
@@ -119,7 +130,21 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
 
     <div class="row">
       <button id="arm" class="primary" type="button">Start scanning</button>
+      <button id="cam" class="ghost" type="button">📷 Scan with camera</button>
       <span id="armed" class="armed off"><span class="dot"></span><span id="armed-text">Tap Start so the page can hear the scanner and play sounds</span></span>
+    </div>
+
+    <div id="camview" class="camview" hidden role="dialog" aria-label="Scan with camera">
+      <div class="cam-box">
+        <video id="cam-video" playsinline muted></video>
+        <div id="cam-aim" class="cam-aim"></div>
+        <div id="cam-tip" class="cam-tip">Point at a label</div>
+      </div>
+      <div id="cam-slot" class="cam-slot"></div>
+      <div class="cam-bar">
+        <button id="cam-torch" class="ghost" type="button" hidden>💡 Light</button>
+        <button id="cam-close" class="primary" type="button">Done</button>
+      </div>
     </div>
 
     <div id="last" class="last" aria-live="polite">
@@ -192,7 +217,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
         <strong>Nothing recorded yet.</strong>
         <ol>
           <li>Tap <b>Start scanning</b> and scan what goes in. That's it.</li>
-          <li>Pair a Bluetooth barcode scanner with this phone or PC and tap <b>Start scanning</b>.</li>
+          <li>Pair a Bluetooth barcode scanner with this phone or PC and tap <b>Start scanning</b>. No scanner? Tap <b>Scan with camera</b> and point the phone at the label.</li>
           <li>Optional: print shelf labels (tick <b>Shelf label</b> in the label app). Scan one and the items after it are listed under that shelf.</li>
           <li>No phone at the freezer? Put the scanner in <b>Storage Mode</b>, scan away, then open this page, tap Start scanning and scan <b>Upload All Stored Codes</b>. Afterwards scan <b>Clear All Stored Codes</b> so they aren't uploaded twice.</li>
           <li>Print a <b>TAKE OUT</b> and a <b>PUT IN</b> label (<code>text "TAKE OUT" --command</code>) for the freezer door. Scan TAKE OUT, then what you take.</li>
@@ -391,6 +416,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     feedback("loc");
   });
   window.addEventListener("blur", () => {
+    if (camOpening || cam) return;             // the camera's permission prompt, not leaving the page
     if (mode === "out") setMode("in");         // coming back should never still be taking out
     if (armed) setArmed(false, "Paused: tap Start again (the page lost focus)");
   });
@@ -419,6 +445,119 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
   $("mode-out").addEventListener("click", () => setMode("out"));
 
   // ---------------------------------------------------------------- scans
+  // ---------------------------------------------------------------- camera
+  // The phone's camera reads the same QR labels as the Bluetooth scanner. Chrome on
+  // Android has a built-in BarcodeDetector; anywhere else jsqr.js decodes the frames.
+  // While the camera is open, the freezer/mode row and the last-scan box move into it.
+  // cam is the open session; each await re-checks it is still the same one, so a Done tap,
+  // a double tap or a hidden page mid-open can't leave a camera running or the boxes stranded.
+  let cam = null, camOpening = false;
+  async function qrReader(){          // -> async (video) => [every QR text in view]
+    if ("BarcodeDetector" in window) {
+      try {
+        if ((await BarcodeDetector.getSupportedFormats()).includes("qr_code")) {
+          const d = new BarcodeDetector({ formats: ["qr_code"] });
+          return async (video) => (await d.detect(video)).map(r => r.rawValue);
+        }
+      } catch {}
+    }
+    if (!window.jsQR) await new Promise((ok, bad) => { const sc = document.createElement("script"); sc.src = "jsqr.js"; sc.onload = ok; sc.onerror = bad; document.head.append(sc); });
+    const c = document.createElement("canvas"), x = c.getContext("2d", { willReadFrequently: true });
+    return async (video) => {
+      const w = video.videoWidth, h = video.videoHeight; if (!w) return [];
+      const k = Math.min(1, 800 / Math.max(w, h)); c.width = Math.round(w * k); c.height = Math.round(h * k);
+      x.drawImage(video, 0, 0, c.width, c.height);
+      const r = window.jsQR(x.getImageData(0, 0, c.width, c.height).data, c.width, c.height, { inversionAttempts: "dontInvert" });
+      return r ? [r.data] : [];
+    };
+  }
+  async function openCam(){
+    if (cam || camOpening) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+      return show("err", "No camera here", "This browser can't use the camera", "Try Chrome on the phone");
+    camOpening = true;                // the permission prompt blurs the page; keep Take out on
+    const keepMode = mode;
+    try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); await ac.resume(); } catch {}
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    } catch (e) {
+      camOpening = false;
+      return show("err", "Camera not allowed", e.name === "NotAllowedError" ? "Allow the camera for this page" : (e.message || e.name), "Then tap Scan with camera again");
+    }
+    camOpening = false;
+    if (mode !== keepMode) setMode(keepMode);
+    if (document.hidden) { stream.getTracks().forEach(t => t.stop()); return; }
+    const view = $("camview"), video = $("cam-video"), slot = $("cam-slot");
+    const row = $("shelf").closest(".row"), last = $("last");
+    const me = cam = { stream, track: stream.getVideoTracks()[0], timer: 0, lock: null, seen: new Map(), pauseUntil: 0,
+                       moved: [[row, row.parentNode, row.nextSibling], [last, last.parentNode, last.nextSibling]] };
+    slot.append(row, last);
+    view.hidden = false;
+    document.body.style.overflow = "hidden";
+    video.srcObject = stream;
+    try { await video.play(); } catch {}
+    if (cam !== me) return;
+    try { if (navigator.wakeLock) me.lock = await navigator.wakeLock.request("screen"); } catch {}
+    if (cam !== me) { try { me.lock && me.lock.release(); } catch {} return; }
+    const caps = me.track.getCapabilities ? me.track.getCapabilities() : {};
+    $("cam-torch").hidden = !caps.torch;
+    let read;
+    try { read = await qrReader(); }
+    catch { closeCam(); return show("err", "Camera scanning didn't load", "Check the connection and try again", ""); }
+    if (cam !== me) return;
+    const tick = async () => {
+      if (cam !== me) return;
+      if (Date.now() >= me.pauseUntil && video.readyState >= 2) {
+        let raws = [];
+        try { raws = await read(video); } catch {}
+        if (cam !== me) return;
+        const now = Date.now();
+        if (raws.length > 1) {
+          $("cam-tip").textContent = "One label at a time";
+        } else if (raws.length === 1) {
+          $("cam-tip").textContent = "Point at a label";
+          const raw = raws[0];
+          // A label stays in view for a while: count it once until it has been out of
+          // view for 4 s. Remembering every label seen (not just the last) stops two
+          // labels in frame from taking turns.
+          const seenAt = me.seen.get(raw);
+          me.seen.set(raw, now);
+          if (seenAt === undefined || now - seenAt > 4000) {
+            me.pauseUntil = now + 900;
+            $("cam-aim").classList.add("hit"); setTimeout(() => $("cam-aim").classList.remove("hit"), 600);
+            try { navigator.vibrate && navigator.vibrate(60); } catch {}
+            handleAll(raw.replace(/\r\n?/g, "\n"));
+          }
+        }
+        for (const [k, t] of me.seen) if (now - t > 60000) me.seen.delete(k);
+      }
+      if (cam === me) me.timer = setTimeout(tick, 120);
+    };
+    tick();
+  }
+  function closeCam(){
+    if (!cam) return;
+    const me = cam; cam = null;
+    clearTimeout(me.timer);
+    me.stream.getTracks().forEach(t => t.stop());
+    try { me.lock && me.lock.release(); } catch {}
+    for (const [el, parent, next] of me.moved) parent.insertBefore(el, next);
+    $("cam-video").srcObject = null;
+    $("camview").hidden = true;
+    $("cam-tip").textContent = "Point at a label";
+    $("cam-torch").hidden = true; $("cam-torch").setAttribute("aria-pressed", "false");
+    document.body.style.overflow = "";
+  }
+  $("cam").addEventListener("click", openCam);
+  $("cam-close").addEventListener("click", closeCam);
+  $("cam-torch").addEventListener("click", async () => {
+    if (!cam) return;
+    const on = $("cam-torch").getAttribute("aria-pressed") !== "true";
+    try { await cam.track.applyConstraints({ advanced: [{ torch: on }] }); $("cam-torch").setAttribute("aria-pressed", String(on)); } catch {}
+  });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) closeCam(); });
+
   // ---------------------------------------------------------------- scan log
   // Every scan's raw text and outcome goes to the db collection "scanlog" (queued
   // on this device until the list is connected), so a bad scan can be diagnosed
