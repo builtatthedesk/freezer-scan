@@ -125,7 +125,10 @@
   }
   // A date typed into the name ("TJ Waffles 11-2-26") is already shown as the date,
   // and would keep two packs of the same food apart.
-  function nameOf(it){ return String(it.text || "").replace(/(?:^|\s+)(?:\/\s*)?\d{1,2}-\d{1,2}-\d{2}(?:\d{2})?\s*$/, "").trim() || "(no name)"; }
+  // A store prefix ("TJ Waffles", "Trader Joe's Wraps") is dropped so the food sorts by
+  // what it is. The label keeps it; search still finds it.
+  const STORE = /^(?:TJ['’]?s?|Trader Joe['’]?s)\s+(?=\S)/i;
+  function nameOf(it){ return String(it.text || "").replace(/(?:^|\s+)(?:\/\s*)?\d{1,2}-\d{1,2}-\d{2}(?:\d{2})?\s*$/, "").trim().replace(STORE, "").trim() || "(no name)"; }
   function where(it){ return it.shelf || NO_FREEZER; }
 
   function highlight(el, text, q){
@@ -255,7 +258,7 @@
     const sort = $("sort").value, showOut = $("showOut").checked;
     let list = items.filter(it => (showOut || it.status === "in")
                                && (!freezer || where(it) === freezer)
-                               && (!q || nameOf(it).toLowerCase().includes(q)));
+                               && (!q || nameOf(it).toLowerCase().includes(q) || String(it.text || "").toLowerCase().includes(q)));
     const byAge = (a, b) => (dateOf(a) || "9").localeCompare(dateOf(b) || "9");
     const cmp = { old: byAge, new: (a, b) => byAge(b, a),
                   name: (a, b) => nameOf(a).localeCompare(nameOf(b)), cook: (a, b) => nameOf(a).localeCompare(nameOf(b)),
