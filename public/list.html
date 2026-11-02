@@ -36,6 +36,28 @@
   .age.mid { color:var(--mid); } .age.old { color:var(--old); font-weight:600; }
   .m { grid-column:1 / -1; color:var(--muted); font-size:14px; }
   .msg { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; color:var(--muted); }
+  .n { display:inline-block; margin-left:6px; padding:0 8px; border-radius:999px; background:var(--chip); font-size:14px; font-weight:600; }
+  .soon { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--mid); border-radius:12px; padding:10px 12px; margin:8px 0 4px; }
+  .soon b { display:block; margin-bottom:4px; }
+  .soon div { display:flex; justify-content:space-between; gap:10px; font-size:15px; padding:2px 0; }
+  button.print { font:inherit; font-size:15px; padding:8px 14px; border-radius:10px; min-height:40px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; margin-left:auto; }
+  #paper { display:none; }
+  @media print {
+    @page { margin:0.5in; }
+    body { background:#fff; color:#000; font:10.5pt/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .wrap { display:none; }
+    #paper { display:block; }
+    #paper h1 { font-size:16pt; margin:0 0 2pt; }
+    #paper .when { color:#555; margin:0 0 10pt; }
+    #paper h2 { font-size:11pt; text-transform:none; letter-spacing:0; color:#000; margin:10pt 0 4pt; }
+    #paper table { width:100%; border-collapse:collapse; }
+    #paper th { text-align:left; border-bottom:1.5pt solid #000; padding:2pt 6pt 2pt 0; font-size:9.5pt; }
+    #paper td { border-bottom:0.5pt solid #bbb; padding:3pt 6pt 3pt 0; vertical-align:top; }
+    #paper td.c, #paper th.c { text-align:center; width:3em; }
+    #paper td.old { font-weight:700; }
+    #paper tr { break-inside:avoid; }
+    #paper thead { display:table-header-group; }
+  }
   mark { background:#fff3a3; color:inherit; border-radius:3px; }
   @media (prefers-color-scheme: dark) { mark { background:#5a4b00; } }
 </style>
@@ -51,17 +73,20 @@
   <div class="row" id="freezers" aria-label="Which freezer"></div>
   <div class="row">
     <select id="sort" aria-label="Sort">
+      <option value="cook">A to Z, combined</option>
       <option value="old">Oldest first</option>
       <option value="new">Newest first</option>
       <option value="name">A to Z</option>
       <option value="freezer">By freezer</option>
     </select>
     <label class="small"><input type="checkbox" id="showOut"> Show used up</label>
+    <button class="print" type="button" id="print">🖨 Print</button>
   </div>
 
   <p class="count" id="count"></p>
   <div id="list"></div>
 </div>
+<div id="paper" aria-hidden="true"></div>
 <script>
 (() => {
   "use strict";
@@ -77,7 +102,7 @@
   if (m) $("bins-link").href = "bins.html" + location.hash;
 
   let items = [], freezer = LS.get("fl.freezer") || "", loadedAt = null;
-  $("sort").value = LS.get("fl.sort") || "old";
+  $("sort").value = LS.get("fl.sort2") || "cook";
 
   function dateOf(it){ return it.printed || (it.inAt || it.firstSeen || "").slice(0, 10); }
   function days(it){
@@ -98,7 +123,9 @@
     const t = new Date(d + "T12:00:00");
     return isNaN(t) ? d : t.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   }
-  function nameOf(it){ return String(it.text || "").replace(/\s*\/\s*\d{1,2}-\d{1,2}-\d{2,4}\s*$/, "").trim() || "(no name)"; }
+  // A date typed into the name ("TJ Waffles 11-2-26") is already shown as the date,
+  // and would keep two packs of the same food apart.
+  function nameOf(it){ return String(it.text || "").replace(/(?:^|\s+)(?:\/\s*)?\d{1,2}-\d{1,2}-\d{2}(?:\d{2})?\s*$/, "").trim() || "(no name)"; }
   function where(it){ return it.shelf || NO_FREEZER; }
 
   function highlight(el, text, q){
@@ -136,6 +163,92 @@
     return r;
   }
 
+  // For whoever's cooking: one row per food (case-insensitive name), how many packs,
+  // which freezers, and the age of the oldest pack -- that's the one to use first.
+  function groups(list){
+    const m = new Map();
+    for (const it of list){
+      const k = nameOf(it).toLowerCase();
+      const g = m.get(k) || { name: nameOf(it), packs: [] };
+      if (/^[a-z]/.test(g.name) && /^[A-Z]/.test(nameOf(it))) g.name = nameOf(it);
+      g.packs.push(it); m.set(k, g);
+    }
+    return [...m.values()].map(g => {
+      g.packs.sort((a, b) => (dateOf(a) || "9").localeCompare(dateOf(b) || "9"));
+      g.oldest = g.packs[0];
+      const by = new Map();
+      for (const it of g.packs) by.set(where(it), (by.get(where(it)) || 0) + 1);
+      g.where = [...by].map(([w, n]) => by.size > 1 && n > 1 ? `${w} ${n}` : w).join(" · ");
+      return g;
+    }).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }));
+  }
+  const SOON = 5, SOON_DAYS = 60;     // the oldest few (two months or more), shown on top
+  function soonest(gs){
+    return gs.filter(g => days(g.oldest) != null && days(g.oldest) >= SOON_DAYS)
+             .sort((a, b) => days(b.oldest) - days(a.oldest)).slice(0, SOON);
+  }
+  function groupRow(g, q){
+    const r = document.createElement("div"); r.className = "item";
+    const t = document.createElement("span"); t.className = "t"; highlight(t, g.name, q);
+    if (g.packs.length > 1) { const n = document.createElement("span"); n.className = "n"; n.textContent = "×" + g.packs.length; t.append(n); }
+    const [cls, txt] = ageText(days(g.oldest));
+    const a = document.createElement("span"); a.className = "age " + cls; a.textContent = txt;
+    const meta = document.createElement("span"); meta.className = "m";
+    meta.textContent = [g.where, dateOf(g.oldest) ? (g.packs.length > 1 ? "oldest " : "dated ") + pretty(dateOf(g.oldest)) : null].filter(Boolean).join(" · ");
+    r.append(t, a, meta);
+    return r;
+  }
+  function renderCook(list, q){
+    const out = $("list"); out.replaceChildren();
+    const gs = groups(list.filter(it => it.status === "in"));
+    const old = soonest(gs);
+    if (!q && gs.length > SOON && old.length) {
+      const box = document.createElement("div"); box.className = "soon";
+      const h = document.createElement("b"); h.textContent = "Use these first"; box.append(h);
+      for (const g of old) {
+        const d = document.createElement("div");
+        const nm = document.createElement("span"); nm.textContent = g.name + " · " + where(g.oldest);
+        const ag = document.createElement("span"); const [cls, txt] = ageText(days(g.oldest)); ag.className = "age " + cls; ag.textContent = txt;
+        d.append(nm, ag); box.append(d);
+      }
+      out.append(box);
+    }
+    for (const g of gs) out.append(groupRow(g, q));
+    const used = list.filter(it => it.status === "out");
+    if (used.length) {
+      const h = document.createElement("h2"); h.textContent = "Used up"; out.append(h);
+      for (const it of used) out.append(row(it, q));
+    }
+  }
+
+  // The printed page: everything in the freezers (or the one freezer picked), A to Z.
+  function buildPaper(){
+    const list = items.filter(it => it.status === "in" && (!freezer || where(it) === freezer));
+    const gs = groups(list);
+    const pg = $("paper"); pg.replaceChildren();
+    if (!loadedAt) { const h = document.createElement("h1"); h.textContent = "The list hasn't loaded yet. Open it from the family link, then print."; pg.append(h); return; }
+    const el = (tag, text, cls) => { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; };
+    pg.append(el("h1", (freezer ? freezer : "Freezer list")));
+    pg.append(el("p", `${list.length} pack${list.length === 1 ? "" : "s"} · printed ${new Date().toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}`, "when"));
+    if (gs.length > SOON && soonest(gs).length) {
+      pg.append(el("h2", "Use these first"));
+      pg.append(el("p", soonest(gs).map(g => `${g.name} (${where(g.oldest)}, ${ageText(days(g.oldest))[1]})`).join(" · ")));
+    }
+    const tb = document.createElement("table");
+    const hr = document.createElement("tr"), th = document.createElement("thead"), body = document.createElement("tbody");
+    hr.append(el("th", "Food"), el("th", "#", "c"), el("th", "Where"), el("th", "Oldest"));
+    th.append(hr); tb.append(th, body);
+    for (const g of gs) {
+      const tr = document.createElement("tr");
+      const [cls, txt] = ageText(days(g.oldest));
+      tr.append(el("td", g.name), el("td", String(g.packs.length), "c"), el("td", g.where), el("td", txt, cls === "old" ? "old" : ""));
+      body.append(tr);
+    }
+    pg.append(el("h2", "Everything, A to Z"), tb);
+  }
+  $("print").addEventListener("click", () => { buildPaper(); window.print(); });
+  window.addEventListener("beforeprint", buildPaper);   // Ctrl+P / the browser menu too
+
   function render(){
     renderFreezers();
     const q = $("q").value.trim().toLowerCase();
@@ -145,7 +258,7 @@
                                && (!q || nameOf(it).toLowerCase().includes(q)));
     const byAge = (a, b) => (dateOf(a) || "9").localeCompare(dateOf(b) || "9");
     const cmp = { old: byAge, new: (a, b) => byAge(b, a),
-                  name: (a, b) => nameOf(a).localeCompare(nameOf(b)),
+                  name: (a, b) => nameOf(a).localeCompare(nameOf(b)), cook: (a, b) => nameOf(a).localeCompare(nameOf(b)),
                   freezer: (a, b) => where(a).localeCompare(where(b)) || byAge(a, b) }[sort];
     list.sort((a, b) => (a.status === "out") - (b.status === "out") || cmp(a, b));
 
@@ -154,6 +267,11 @@
       ? `${inCount} found${q ? ` for “${q}”` : ""}${freezer ? ` in ${freezer}` : ""}`
       : `${inCount} item${inCount === 1 ? "" : "s"} in the freezers`;
 
+    if (sort === "cook" && list.length) {
+      const n = groups(list.filter(it => it.status === "in")).length;
+      $("count").textContent += ` · ${n} kind${n === 1 ? "" : "s"}`;
+      return renderCook(list, q);
+    }
     const out = $("list"); out.replaceChildren();
     if (!list.length) {
       const d = document.createElement("div"); d.className = "msg";
@@ -186,7 +304,7 @@
   }
 
   $("q").addEventListener("input", render);
-  $("sort").addEventListener("change", () => { LS.set("fl.sort", $("sort").value); render(); });
+  $("sort").addEventListener("change", () => { LS.set("fl.sort2", $("sort").value); render(); });
   $("showOut").addEventListener("change", render);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
   setInterval(() => { if (!document.hidden) load(); }, 60000);
