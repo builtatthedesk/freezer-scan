@@ -36,22 +36,33 @@
   .hint { font-size:14px; color:var(--muted); }
   .hint li { margin:4px 0; }
   .sheet { display:none; }
-  @page { size: 90mm 29mm; margin: 0; }
+  .media { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:0 0 12px; font-size:14px; color:var(--muted); }
+  .previews.paper { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+  .previews.paper img { border-style:dashed; }
   @media print {
     body { background:#fff; }
     .wrap { display:none; }
     .sheet { display:block; }
-    .sheet img { display:block; width:90mm; height:28.8mm; break-after:page; page-break-after:always; }
-    .sheet img:last-child { break-after:auto; page-break-after:auto; }
+    .sheet.roll img { display:block; width:90mm; height:28.8mm; break-after:page; page-break-after:always; }
+    .sheet.roll img:last-child { break-after:auto; page-break-after:auto; }
+    /* Plain paper: two columns of 3.6 x 1.16 in labels with dashed cut lines; fits Letter and A4. */
+    .sheet.paper { display:grid; grid-template-columns:repeat(2, 3.6in); gap:0.3in 0.2in; justify-content:center; align-content:start; }
+    .sheet.paper img { width:3.6in; height:1.16in; border:1px dashed #888; break-inside:avoid; page-break-inside:avoid; }
   }
 </style>
+<style id="page-size">@page { size: 90mm 29mm; margin: 0; }</style>
 </head>
 <body>
 <div class="wrap">
   <h1>🏷️ Make freezer labels</h1>
-  <p class="sub">For 29 × 90 mm labels (Brother DK-1201). <a id="back" href="./">Back to scanning</a></p>
+  <p class="sub" id="sub">Print on a label printer, or on plain paper and cut them out. <a id="back" href="./">Back to scanning</a></p>
 
   <div class="card">
+    <div class="media" role="group" aria-label="Print on">
+      Print on:
+      <button class="chip" type="button" data-media="paper" aria-pressed="false">Plain paper</button>
+      <button class="chip" type="button" data-media="roll" aria-pressed="false">Label printer</button>
+    </div>
     <div class="kinds" role="group" aria-label="Label type">
       <button class="chip" type="button" data-kind="food" aria-pressed="true">Food</button>
       <button class="chip" type="button" data-kind="loc" aria-pressed="false">Freezer</button>
@@ -74,10 +85,16 @@
     <div class="btns">
       <button class="main" type="button" id="print">Print</button>
       <button class="alt" type="button" id="save">Save images</button>
+      <button class="alt" type="button" id="clear" hidden>Start a new sheet</button>
     </div>
-    <ul class="hint">
+    <ul class="hint" id="hint-roll">
       <li><b>On a computer:</b> Print, choose the Brother printer, paper size 29 mm × 90 mm, scale 100%.</li>
       <li><b>On a phone:</b> Save images (or share them) and print them from Brother's label app.</li>
+      <li>Each food label gets its own ID, so two packs of the same food are still told apart.</li>
+    </ul>
+    <ul class="hint" id="hint-paper" hidden>
+      <li>Keep adding food above; everything lands on the same sheet, 14 labels to a page.</li>
+      <li><b>Print</b> on any printer at <b>100% / actual size</b>, cut along the dashed lines and tape them on. Clear packing tape over the label keeps it readable in the freezer.</li>
       <li>Each food label gets its own ID, so two packs of the same food are still told apart.</li>
     </ul>
   </div>
@@ -101,7 +118,20 @@
 
   // 300 dpi: 90 x 29 mm.
   const W = 1063, H = 343, PAD = 18;
-  let kind = "food", made = [];
+  let kind = "food", made = [], printed = 0;   // printed: labels at the front of a paper sheet already sent to the printer
+  let media = LS.get("lb.media") === "roll" ? "roll" : "paper";
+  function setMedia(md){
+    media = md; LS.set("lb.media", md);
+    document.querySelectorAll("[data-media]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.media === md)));
+    $("page-size").textContent = md === "paper" ? "@page { size: auto; margin: 0.4in; }" : "@page { size: 90mm 29mm; margin: 0; }";
+    $("sheet").className = "sheet " + md;
+    $("previews").classList.toggle("paper", md === "paper");
+    $("hint-roll").hidden = md !== "roll"; $("hint-paper").hidden = md !== "paper";
+    $("clear").hidden = md !== "paper";
+    $("make").textContent = md === "paper" ? "Add to sheet" : "Make labels";
+    renderMade();
+  }
+  document.querySelectorAll("[data-media]").forEach(b => b.addEventListener("click", () => setMedia(b.dataset.media)));
 
   const today = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
   $("date").value = today();
@@ -115,7 +145,7 @@
     $("name").placeholder = { food: "e.g. Chicken soup", loc: "e.g. Garage freezer", cmd: "" }[k];
     if (k === "cmd") $("name").value = "TAKE OUT";
     else if ($("name").value === "TAKE OUT") $("name").value = "";
-    $("out").hidden = true;
+    if (media !== "paper") { made = []; renderMade(); }      // a paper sheet keeps what's on it
   }
   document.querySelectorAll("[data-kind]").forEach(b => b.addEventListener("click", () => setKind(b.dataset.kind)));
 
@@ -193,19 +223,39 @@
       }
       $("make").disabled = false;
     }
-    made = labels.map(l => Object.assign(l, { canvas: drawLabel(l.payload, l.title, l.small) }));
-    const pv = $("previews"), sh = $("sheet"); pv.replaceChildren(); sh.replaceChildren();
-    for (const l of made){
-      const url = l.canvas.toDataURL("image/png");
-      const a = new Image(); a.src = url; a.alt = l.payload.replace(/\n/g, " | "); pv.append(a);
-      const b = new Image(); b.src = url; b.alt = ""; sh.append(b);
+    const fresh = labels.map(l => Object.assign(l, { canvas: drawLabel(l.payload, l.title, l.small) }));
+    const restarted = media === "paper" && printed > 0;
+    made = media === "paper" ? made.slice(printed).concat(fresh) : fresh;   // paper collects a whole sheet, minus what's printed
+    printed = 0;
+    renderMade();
+    if (media === "paper") {
+      const pages = Math.ceil(made.length / 14);
+      msg((restarted ? "Printed labels cleared. " : "") + `Added ${fresh.length}. ${made.length} label${made.length === 1 ? "" : "s"} on the sheet` + (pages > 1 ? ` (${pages} pages).` : "."));
+      if (kind === "food") { $("name").value = ""; $("copies").value = "1"; $("name").focus(); }
+    } else {
+      msg(made.length === 1 ? "1 label ready." : made.length + " labels ready.");
+      $("out").scrollIntoView({ behavior: "smooth", block: "start" });
     }
-    $("out").hidden = false;
-    msg(made.length === 1 ? "1 label ready." : made.length + " labels ready.");
-    $("out").scrollIntoView({ behavior: "smooth", block: "start" });
   });
 
+  function renderMade(){
+    const pv = $("previews"), sh = $("sheet"); pv.replaceChildren(); sh.replaceChildren();
+    for (const l of made){
+      l.url = l.url || l.canvas.toDataURL("image/png");
+      const a = new Image(); a.src = l.url; a.alt = l.payload.replace(/\n/g, " | "); pv.append(a);
+      const b = new Image(); b.src = l.url; b.alt = ""; sh.append(b);
+    }
+    $("out").hidden = !made.length;
+  }
+  $("clear").addEventListener("click", () => { made = []; printed = 0; renderMade(); msg("New sheet started."); });
+  setMedia(media);
+
   $("print").addEventListener("click", () => window.print());
+  window.addEventListener("afterprint", () => {
+    if (media !== "paper" || !made.length) return;
+    printed = made.length;
+    msg("Printed. Print again if it jammed; adding more food starts a new sheet.");
+  });
 
   $("save").addEventListener("click", async () => {
     const blobs = await Promise.all(made.map(l => new Promise(res => l.canvas.toBlob(res, "image/png"))));

@@ -112,7 +112,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
 <div class="wrap">
   <header class="top">
     <h1>Freezer Scan</h1>
-    <p>Scan a freezer's label, then the food going in. <a id="labels-link" href="label.html" hidden>Make labels</a></p>
+    <p>Scan a freezer's label, then the food going in. <a id="labels-link" href="label.html" hidden>Make labels</a> <span id="share-wrap" hidden>· <a id="share-link" href="#">Send the family list</a></span></p>
     <p id="moved" hidden style="background:#fff3cd;color:#664d03;border-radius:10px;padding:10px 12px;font-weight:600">This list has moved to <a href="https://freezer-scan.netlify.app/">freezer-scan.netlify.app</a>. Scan there from now on; scans here are not seen by the family list.</p>
   </header>
 
@@ -803,7 +803,38 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
   }
 
   renderShelf(); setMode(mode);
-  if (!window.claude) { $("labels-link").hidden = false; if (location.hash) $("labels-link").href = "label.html" + location.hash; }
+  // Hand the read-only family-list link to someone (share sheet, or copy) without
+  // anyone having to remember it: the API gives the view key to scanning-key holders.
+  // The link is fetched up front so a tap can open the share sheet straight away (phones
+  // drop the tap's permission if a slow fetch sits in between). Messages here stay out of
+  // the scan log: the link carries the view key.
+  let shareUrl = null;
+  const shareText = "What's in our freezers (view only). Open it and add it to your home screen:";
+  async function loadShare(){
+    const k = (location.hash.match(/[#&]w=([\w-]+)/) || [])[1] || LS.get("fs.key");
+    if (!k) return null;
+    const r = await fetch("api/share", { headers: { "x-key": k } });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
+    return shareUrl = location.origin + "/list.html#k=" + j.readKey;
+  }
+  function shareNote(t){ const a = $("share-link"); a.textContent = t; setTimeout(() => { a.textContent = "Send the family list"; }, 4000); }
+  $("share-link").addEventListener("click", async (e) => {
+    e.preventDefault();
+    let url = shareUrl;
+    if (!url) {
+      try { url = await loadShare(); } catch (err) { return shareNote("Couldn't get the link (" + err.message + ")"); }
+      if (!url) return shareNote("Open your scanning link first");
+    }
+    if (navigator.share) {
+      try { await navigator.share({ title: "Freezer list", text: shareText, url }); return; }
+      catch (err) { if (err.name === "AbortError") return; }
+    }
+    try { await navigator.clipboard.writeText(shareText + " " + url); shareNote("Link copied, paste it in a text"); }
+    catch { window.prompt("Copy this link and text it:", url); }
+  });
+  if (!window.claude) loadShare().catch(() => {});
+  if (!window.claude) { $("share-wrap").hidden = false; $("labels-link").hidden = false; if (location.hash) $("labels-link").href = "label.html" + location.hash; }
   if (window.claude) $("moved").hidden = false;
   (async () => {
     const loading = setTimeout(() => { $("sync").textContent = "Can't reach your list yet. Scans will show here but may not save."; }, 10000);

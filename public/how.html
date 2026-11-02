@@ -48,7 +48,7 @@
   <p class="lede">Stick a printed label on the food. Scan it going in and coming out. Everyone in the house can see the list on their phone and search it: "do we still have chicken?"</p>
   <div class="btns">
     <a class="btn main" href="https://freezer-scan.netlify.app/list.html#k=demo">Try the family list</a>
-    <a class="btn" href="https://freezer-scan.netlify.app/#w=demo">Try scanning</a>
+    <a class="btn" href="https://freezer-scan.netlify.app/#w=demo">Try scanning (camera works)</a>
     <a class="btn" href="https://freezer-scan.netlify.app/label.html#w=demo">Try the label maker</a>
   </div>
   <p style="font-size:14px;color:var(--muted)">The demo is a sample list anyone can play with. It resets every day.</p>
@@ -68,35 +68,32 @@
   <figure style="margin-top:14px"><img src="img/label.jpg" alt="A printed label: a QR code beside the words Grandma's chicken noodle soup, the date and the label number" loading="lazy"><figcaption>A label. The words are for people; the QR code is for the scanner.</figcaption></figure>
 
   <h2>What you need</h2>
+  <p><b>To start: a phone and any printer.</b> Print labels on plain paper, cut them out, tape them on, and scan with the phone's camera. Add the gadgets later if you like it.</p>
   <table>
-    <tr><th>Thing</th><th>What we use</th><th class="hide-sm">Notes</th></tr>
-    <tr><td>Label printer</td><td>Brother QL-1110NWB</td><td class="hide-sm">Other Brother QL printers that take DK-1201 labels work too (QL-800, QL-810W, QL-820NWB).</td></tr>
-    <tr><td>Labels</td><td>Brother DK-1201 (29 × 90 mm)</td><td class="hide-sm">Die-cut paper labels, about 400 to a roll.</td></tr>
-    <tr><td>Barcode scanner</td><td>Tera HW0009</td><td class="hide-sm">Optional: the phone's camera can scan too. A Bluetooth scanner that reads QR codes ("2D") and acts like a keyboard ("HID") is faster for big batches.</td></tr>
-    <tr><td>Phone</td><td>An Android phone</td><td class="hide-sm">Carry it with the scanner; Bluetooth reaches about 10 m. iPhone is untested.</td></tr>
-    <tr><td>Your own website</td><td>Netlify, free plan</td><td class="hide-sm">One click below makes your private copy. No app store, no subscription.</td></tr>
+    <tr><th></th><th>Start for free</th><th>Faster, if you get hooked</th></tr>
+    <tr><td>Labels</td><td>Plain paper on any printer, cut out and taped on (14 per page)</td><td>Brother label printer (we use the QL-1110NWB) with DK-1201 sticky labels, 29 × 90 mm</td></tr>
+    <tr><td>Scanning</td><td>The phone's camera: tap <b>Scan with camera</b></td><td>A Bluetooth barcode scanner that reads QR codes ("2D") and types like a keyboard ("HID"); we use the Tera HW0009</td></tr>
+    <tr><td>Phone</td><td colspan="2">An Android phone with Chrome. iPhone is untested.</td></tr>
+    <tr><td>Website</td><td colspan="2">Your own private copy on Netlify's free plan. One click below. No app store, no subscription.</td></tr>
   </table>
 
   <h2>Set it up</h2>
   <ol class="setup">
     <li><b>Make your own copy.</b> Click the button, sign up for a free Netlify account if asked, and make up two passwords when it asks: one for scanning, one for the family list (letters, numbers and dashes, 16 or more characters).<br>
       <a href="https://app.netlify.com/start/deploy?repository=https://github.com/builtatthedesk/freezer-scan" style="display:inline-block;margin-top:8px"><img src="https://www.netlify.com/img/deploy/button.svg" alt="Deploy to Netlify" width="146" height="32"></a></li>
-    <li><b>Write down your two links.</b> Netlify gives your site an address like <code>something.netlify.app</code>. Your links are:<br>
-      Scanning: <code>https://something.netlify.app/#w=</code><i>scanning password</i><br>
-      Family list: <code>https://something.netlify.app/list.html#k=</code><i>viewing password</i><br>
-      Open each on the phone that will use it, in Chrome, then menu ⋮ → <b>Add to Home screen</b>.</li>
-    <li><b>Pair the scanner with your phone.</b> Put the scanner in Bluetooth keyboard mode and pairing mode (for the Tera: scan "Bluetooth HID" then "Pairing" in its manual, or hold the trigger for 8 seconds), then pick it in the phone's Bluetooth settings.</li>
-    <li><b>Print your door labels.</b> On a computer with the Brother printer installed, open your scanning link, tap <b>Make labels</b>, and print one <b>Freezer</b> label per freezer ("Garage freezer", "Kitchen freezer"…) and a <b>Take out</b> label for each. Stick them on the freezers.</li>
-    <li><b>Label your food.</b> Same page, <b>Food</b>: type what it is, pick how many, print. One label per pack.</li>
-    <li><b>Scan.</b> Open the scanning page, tap <b>Start scanning</b>, scan the freezer label, then the food. Send the family-list link to everyone who should see it.</li>
+    <li><b>Open your scanning link on your phone.</b> Netlify gives your site an address like <code>something.netlify.app</code>. Your scanning link is <code>https://something.netlify.app/#w=</code><i>your scanning password</i>. Open it in Chrome, then menu ⋮ → <b>Add to Home screen</b>. Keep this link to yourself.</li>
+    <li><b>Send the family list.</b> On the scanning page tap <b>Send the family list</b> and text it to whoever should see what's in the freezers. They can look and search, not change anything.</li>
+    <li><b>Make labels.</b> Tap <b>Make labels</b>. Add one <b>Freezer</b> label per freezer ("Garage freezer", "Kitchen freezer"…), a <b>Take out</b> label, then your food with how many of each. Choose <b>Plain paper</b> and print the sheet at 100%, or <b>Label printer</b> if you have one.</li>
+    <li><b>Put them on.</b> Freezer and Take out labels on the freezer doors; a food label on each pack. On paper, clear packing tape over the label keeps it readable.</li>
+    <li><b>Scan.</b> Open the scanning page and tap <b>Scan with camera</b> (or <b>Start scanning</b> with a Bluetooth scanner). Scan the freezer label, then the food going in. To take something out, scan <b>Take out</b>, then the food.</li>
   </ol>
-  <div class="note">Printing: from a computer, choose the Brother printer, paper size 29 mm × 90 mm, scale 100%. That's the tested way. On a phone, "Save images" hands the labels to another app, such as Brother's own printing app.</div>
+  <div class="note">Label printer from a computer: choose the Brother printer, paper size 29 mm × 90 mm, scale 100%. Bluetooth scanner: put it in keyboard (HID) mode and pair it with the phone; for the Tera, scan "Bluetooth HID" then "Pairing" from its manual, or hold the trigger for 8 seconds.</div>
 
   <h2>Questions</h2>
   <details><summary>Who can see my list?</summary><p>Only people with one of your two links. The family link can only look; the scanning link can change the list, so share only the family link. The list pages tell search engines to stay away.</p></details>
   <details><summary>Two packs of the same thing?</summary><p>Each label gets its own number, so seven packs of meatloaf are seven separate entries. Take one out and six are left.</p></details>
   <details><summary>Do I have to scan the freezer label every time?</summary><p>Only when you switch freezers. If you forget, food still gets saved; it just isn't sorted into a freezer.</p></details>
-  <details><summary>What does it cost?</summary><p>The printer, labels and scanner, once. The website is on Netlify's free plan.</p></details>
+  <details><summary>What does it cost?</summary><p>Nothing to start: paper, tape, your phone and a free Netlify site. A label printer and a Bluetooth scanner are optional upgrades.</p></details>
   <details><summary>Can I see the code?</summary><p>Yes: <a href="https://github.com/builtatthedesk/freezer-scan">github.com/builtatthedesk/freezer-scan</a> (MIT licence).</p></details>
 
   <footer>Made by <a href="https://github.com/builtatthedesk">Built at the Desk</a>.</footer>

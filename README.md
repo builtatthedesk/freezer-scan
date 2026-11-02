@@ -1,7 +1,8 @@
 # Freezer Scan
 
 Know what's in your freezers. Put a QR label on the food, scan it in and out with
-a Bluetooth barcode scanner, and everyone in the house sees the list on their phone.
+the phone's camera (or a Bluetooth barcode scanner), and everyone in the house sees
+the list on their phone. Labels print on plain paper or a Brother label printer.
 
 **See it and try the demo:** https://freezer-scan.netlify.app/how.html
 
@@ -13,7 +14,7 @@ a Bluetooth barcode scanner, and everyone in the house sees the list on their ph
 |---|---|
 | `public/index.html` | Scanning page. A Bluetooth scanner types each QR code like a keyboard (the page tells labels apart by the pause after a scan), or tap **Scan with camera** to use the phone's camera. |
 | `public/list.html` | Read-only family list: search, sort, filter by freezer. |
-| `public/label.html` | Label maker for 29 × 90 mm labels (Brother DK-1201). Print from a computer or save images. |
+| `public/label.html` | Label maker: a sheet of cut-out labels on plain paper (14 per page), or 29 × 90 mm labels for a Brother DK-1201 roll. |
 | `public/how.html` | The plain-English how-to page. |
 | `netlify/functions/api.mjs` | The only server code: stores the list in Netlify Blobs. |
 

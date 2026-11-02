@@ -5,6 +5,7 @@
 //   DELETE /api/items/:id      write key
 //   POST   /api/ids            write key, body { n } -> { ids } fresh label IDs
 //   POST   /api/log            write key, body = scan-log entry (append-only)
+//   GET    /api/share          write key -> { readKey } for the family-list link
 // Keys come from the READ_KEY / WRITE_KEY env vars and arrive in the x-key header.
 // With DEMO=1 the key "demo" opens a separate sample list anyone may scan into;
 // it is reset to the sample food whenever it is more than a day old.
@@ -90,6 +91,11 @@ export default async (req) => {
     return json(200, { items, at: new Date().toISOString(), canWrite, demo });
   }
   if (!canWrite) return json(403, { error: "This link can only view the list." });
+
+  if (req.method === "GET" && path[0] === "share") {
+    if (demo) return json(200, { readKey: "demo" });
+    return json(200, { readKey: process.env.READ_KEY });
+  }
 
   if (path[0] === "items" && path[1] && /^[\w.:-]{1,80}$/.test(path[1]) && (req.method === "PUT" || req.method === "DELETE")) {
     const id = path[1];
