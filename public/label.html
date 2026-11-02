@@ -39,6 +39,7 @@
   .media { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:0 0 12px; font-size:14px; color:var(--muted); }
   .previews.paper { grid-template-columns:repeat(2, minmax(0, 1fr)); }
   .previews.paper img { border-style:dashed; }
+  .previews.paper img.big { grid-column:1 / -1; }
   @media print {
     body { background:#fff; }
     .wrap { display:none; }
@@ -48,13 +49,15 @@
     /* Plain paper: two columns of 3.6 x 1.16 in labels with dashed cut lines; fits Letter and A4. */
     .sheet.paper { display:grid; grid-template-columns:repeat(2, 3.6in); gap:0.3in 0.2in; justify-content:center; align-content:start; }
     .sheet.paper img { width:3.6in; height:1.16in; border:1px dashed #888; break-inside:avoid; page-break-inside:avoid; }
+    /* Bin labels on paper are twice as big, to read across an attic. */
+    .sheet.paper img.big { grid-column:1 / -1; justify-self:center; width:7.4in; height:2.39in; }
   }
 </style>
 <style id="page-size">@page { size: 90mm 29mm; margin: 0; }</style>
 </head>
 <body>
 <div class="wrap">
-  <h1>🏷️ Make freezer labels</h1>
+  <h1>🏷️ Make labels</h1>
   <p class="sub" id="sub">Print on a label printer, or on plain paper and cut them out. <a id="back" href="./">Back to scanning</a></p>
 
   <div class="card">
@@ -67,12 +70,13 @@
       <button class="chip" type="button" data-kind="food" aria-pressed="true">Food</button>
       <button class="chip" type="button" data-kind="loc" aria-pressed="false">Freezer</button>
       <button class="chip" type="button" data-kind="cmd" aria-pressed="false">Take out</button>
+      <button class="chip" type="button" data-kind="bin" aria-pressed="false">Storage bin</button>
     </div>
     <form id="form">
       <label for="name" id="name-label">What's in it</label>
       <input id="name" autocomplete="off" placeholder="e.g. Chicken soup" maxlength="120" required>
       <div class="two" id="food-only">
-        <div><label for="date">Date</label><input id="date" type="date" required></div>
+        <div id="date-box"><label for="date">Date</label><input id="date" type="date" required></div>
         <div><label for="copies">How many</label><input id="copies" type="number" min="1" max="50" value="1" inputmode="numeric"></div>
       </div>
       <div class="btns"><button class="main" type="submit" id="make">Make labels</button></div>
@@ -93,7 +97,7 @@
       <li>Each food label gets its own ID, so two packs of the same food are still told apart.</li>
     </ul>
     <ul class="hint" id="hint-paper" hidden>
-      <li>Keep adding food above; everything lands on the same sheet, 14 labels to a page.</li>
+      <li>Keep adding food above; everything lands on the same sheet, 14 labels to a page (bin labels print twice as big).</li>
       <li><b>Print</b> on any printer at <b>100% / actual size</b>, cut along the dashed lines and tape them on. Clear packing tape over the label keeps it readable in the freezer.</li>
       <li>Each food label gets its own ID, so two packs of the same food are still told apart.</li>
     </ul>
@@ -139,10 +143,11 @@
   function setKind(k){
     kind = k;
     document.querySelectorAll("[data-kind]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.kind === k)));
-    $("food-only").hidden = k !== "food";
+    $("food-only").hidden = k !== "food" && k !== "bin";
+    $("date-box").hidden = k === "bin";
     $("date").required = k === "food";
-    $("name-label").textContent = { food: "What's in it", loc: "Which freezer", cmd: "Label text" }[k];
-    $("name").placeholder = { food: "e.g. Chicken soup", loc: "e.g. Garage freezer", cmd: "" }[k];
+    $("name-label").textContent = { food: "What's in it", loc: "Which freezer", cmd: "Label text", bin: "Bin name" }[k];
+    $("name").placeholder = { food: "e.g. Chicken soup", loc: "e.g. Garage freezer", cmd: "", bin: "e.g. Christmas" }[k];
     if (k === "cmd") $("name").value = "TAKE OUT";
     else if ($("name").value === "TAKE OUT") $("name").value = "";
     if (media !== "paper") { made = []; renderMade(); }      // a paper sheet keeps what's on it
@@ -197,16 +202,58 @@
   }
 
   function msg(t, err){ $("msg").textContent = t; $("msg").classList.toggle("err", !!err); }
+  async function api(method, path, body){
+    const r = await fetch("api/" + path, { method, headers: { "x-key": key, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
+    return j;
+  }
+  // Pages a paper sheet takes: small labels pair up two to a row, a bin label has a row
+  // to itself; rows of 1.16 in (bin 2.39 in) with 0.3 in between, 10.2 in to a page.
+  function pagesFor(list){
+    const rows = []; let half = false;
+    for (const l of list) {
+      if (l.big) { rows.push(2.39); half = false; }
+      else if (half) half = false;
+      else { rows.push(1.16); half = true; }
+    }
+    let pages = rows.length ? 1 : 0, used = 0;
+    for (const h of rows) { if (used && used + 0.3 + h > 10.2) { pages++; used = 0; } used += (used ? 0.3 : 0) + h; }
+    return pages;
+  }
 
   $("form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = $("name").value.replace(/\s+/g, " ").trim();
     if (!name) return;
-    if (kind === "food" && /^(LOC|CMD):/i.test(name)) return msg("A food name can't start with LOC: or CMD: (those are freezer and command labels).", true);
+    if (kind === "bin" && name.length > 76) return msg("Keep a bin name under 76 letters.", true);
+    if ((kind === "food" || kind === "bin") && /^(LOC|CMD|BIN):/i.test(name)) return msg("A name can't start with LOC:, CMD: or BIN: (those mark freezer, command and bin labels).", true);
     if (/[^ -~]/.test(name)) return msg("Use plain letters only: most scanners can't type accents or emoji, so the name would come out garbled.", true);
     let labels = [];
     if (kind === "loc") labels = [{ payload: "LOC: " + name, title: name, small: "Scan me first", file: name }];
     else if (kind === "cmd") labels = [{ payload: "CMD: " + name.toUpperCase(), title: name.toUpperCase(), small: "", file: name }];
+    else if (kind === "bin") {
+      // "Christmas" x 5 -> Christmas 1..5, carrying on after any Christmas bins already made.
+      const n = Math.max(1, Math.min(50, Number($("copies").value) || 1));
+      if (!key) return msg("Open this page from your scanning link first, so each bin can be saved.", true);
+      $("make").disabled = true; msg("Saving bins…");
+      try {
+        let names = [name];
+        if (n > 1) {
+          const have = (await api("GET", "bins")).bins || {};
+          const re = new RegExp("^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + " (\\d+)$", "i");
+          const top = Math.max(0, ...Object.values(have).map(b => +((b.name.match(re) || [])[1] || 0)));
+          names = Array.from({ length: n }, (_, i) => name + " " + (top + i + 1));
+        }
+        const ids = (await api("POST", "ids", { n: names.length })).ids;
+        for (let i = 0; i < names.length; i++) await api("PUT", "bins/" + ids[i], { name: names[i] });
+        labels = names.map((nm, i) => ({ payload: `BIN: ${nm}\nID: ${ids[i]}`, title: nm, small: "Storage bin  ·  " + ids[i], file: nm + " " + ids[i], big: true }));
+      } catch (err) {
+        $("make").disabled = false;
+        return msg("Couldn't save the bins (" + err.message + ").", true);
+      }
+      $("make").disabled = false;
+    }
     else {
       const n = Math.max(1, Math.min(50, Number($("copies").value) || 1));
       const date = $("date").value || today();
@@ -229,9 +276,9 @@
     printed = 0;
     renderMade();
     if (media === "paper") {
-      const pages = Math.ceil(made.length / 14);
+      const pages = pagesFor(made);
       msg((restarted ? "Printed labels cleared. " : "") + `Added ${fresh.length}. ${made.length} label${made.length === 1 ? "" : "s"} on the sheet` + (pages > 1 ? ` (${pages} pages).` : "."));
-      if (kind === "food") { $("name").value = ""; $("copies").value = "1"; $("name").focus(); }
+      if (kind === "food" || kind === "bin") { $("name").value = ""; $("copies").value = "1"; $("name").focus(); }
     } else {
       msg(made.length === 1 ? "1 label ready." : made.length + " labels ready.");
       $("out").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -242,13 +289,28 @@
     const pv = $("previews"), sh = $("sheet"); pv.replaceChildren(); sh.replaceChildren();
     for (const l of made){
       l.url = l.url || l.canvas.toDataURL("image/png");
-      const a = new Image(); a.src = l.url; a.alt = l.payload.replace(/\n/g, " | "); pv.append(a);
-      const b = new Image(); b.src = l.url; b.alt = ""; sh.append(b);
+      const a = new Image(); a.src = l.url; a.alt = l.payload.replace(/\n/g, " | "); a.classList.toggle("big", !!l.big); pv.append(a);
+      const b = new Image(); b.src = l.url; b.alt = ""; b.classList.toggle("big", !!l.big); sh.append(b);
     }
     $("out").hidden = !made.length;
   }
   $("clear").addEventListener("click", () => { made = []; printed = 0; renderMade(); msg("New sheet started."); });
   setMedia(media);
+
+  // "Print this label again" on a bin's page lands here with its ID: same ID, same name.
+  const reprint = location.hash.match(/[#&]reprint=([\w.:-]+)/);
+  if (reprint && key) (async () => {
+    setKind("bin");
+    try {
+      const b = ((await api("GET", "bins")).bins || {})[reprint[1]];
+      if (!b) return msg("That bin isn't in the list any more.", true);
+      const l = { payload: `BIN: ${b.name}\nID: ${reprint[1]}`, title: b.name, small: "Storage bin  ·  " + reprint[1], file: b.name + " " + reprint[1], big: true };
+      l.canvas = drawLabel(l.payload, l.title, l.small);
+      made = media === "paper" ? made.concat([l]) : [l];
+      renderMade();
+      msg(`Label for ${b.name} ready to print.`);
+    } catch (e) { msg("Couldn't load the bin (" + e.message + ").", true); }
+  })();
 
   $("print").addEventListener("click", () => window.print());
   window.addEventListener("afterprint", () => {

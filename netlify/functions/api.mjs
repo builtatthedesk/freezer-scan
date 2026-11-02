@@ -6,6 +6,13 @@
 //   POST   /api/ids            write key, body { n } -> { ids } fresh label IDs
 //   POST   /api/log            write key, body = scan-log entry (append-only)
 //   GET    /api/share          write key -> { readKey } for the family-list link
+// Storage bins (attic boxes): one JSON blob { id: bin }, photos as separate blobs.
+//   GET    /api/bins                     read key -> { bins, canWrite }
+//   PUT    /api/bins/:id                 write key, body { name, notes } (creates or renames)
+//   DELETE /api/bins/:id                 write key, removes the bin and its photos
+//   POST   /api/bins/:id/photos          write key, body { full, thumb } as JPEG data URLs
+//   DELETE /api/bins/:id/photos/:pid     write key
+//   GET    /api/photo/:id/:pid?size=thumb|full   read key -> image/jpeg
 // Keys come from the READ_KEY / WRITE_KEY env vars and arrive in the x-key header.
 // With DEMO=1 the key "demo" opens a separate sample list anyone may scan into;
 // it is reset to the sample food whenever it is more than a day old.
@@ -30,6 +37,34 @@ function cleanItem(body){
   return out;
 }
 const readJson = (req) => req.json().catch(() => undefined);
+const ID_RE = /^[\w.:-]{1,80}$/;
+
+// Read-modify-write a JSON blob with compare-and-swap; fn returns a Response to stop early.
+async function updateJson(store, key, fn){
+  for (let i = 0; i < 8; i++) {
+    const cur = await store.getWithMetadata(key, { type: "json" });
+    if (cur && !cur.etag) return json(500, { error: "storage gave no version tag" });
+    const data = (cur && cur.data) || {};
+    const stop = fn(data);
+    if (stop) return stop;
+    const opts = cur ? { onlyIfMatch: cur.etag, metadata: cur.metadata } : { onlyIfNew: true };
+    const res = await store.setJSON(key, data, opts);
+    if (res.modified) return null;
+  }
+  return json(409, { error: "busy, try again" });
+}
+
+const MAX_PHOTOS = 30, MAX_PHOTO_BYTES = 1.5e6, MAX_THUMB_BYTES = 150e3;
+function jpegFrom(dataUrl, max){
+  const m = typeof dataUrl === "string" && dataUrl.match(/^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/);
+  if (!m) return null;
+  const buf = Buffer.from(m[1], "base64");
+  if (buf.length > max || buf[0] !== 0xff || buf[1] !== 0xd8) return null;   // JPEG starts FF D8
+  return buf;
+}
+async function dropPhotos(store, binId, pids){
+  await Promise.all(pids.flatMap(pid => [store.delete(`photo/${binId}/${pid}/full`), store.delete(`photo/${binId}/${pid}/thumb`)]));
+}
 
 // Keys must survive the trip through a link (#w=...), so: letters, digits, _ and -,
 // at least 16 long, and the two must differ.
@@ -64,6 +99,24 @@ function demoItems(){
   return items;
 }
 
+function demoBins(){
+  const at = new Date().toISOString();
+  const bins = {};
+  [["Christmas 1", "Lights, extension cords"], ["Christmas 2", "Ornaments (glass, wrapped)"], ["Camping gear", "Tent, two sleeping bags, lantern"]]
+    .forEach(([name, notes], i) => { bins["000000-" + (9001 + i)] = { name, notes, photos: [], createdAt: at, updatedAt: at }; });
+  return bins;
+}
+async function readBins(store, demo){
+  if (!demo) return (await store.get("bins", { type: "json" })) || {};
+  const cur = await store.getWithMetadata("bins", { type: "json" });
+  if (cur && Date.now() - Date.parse((cur.metadata && cur.metadata.seeded) || 0) < 864e5) return cur.data;
+  const { blobs } = await store.list({ prefix: "photo/" });       // yesterday's demo photos go too
+  for (const b of blobs) await store.delete(b.key);
+  const bins = demoBins();
+  await store.setJSON("bins", bins, { metadata: { seeded: new Date().toISOString() } });
+  return bins;
+}
+
 async function readItems(store, demo){
   if (!demo) return (await store.get("items", { type: "json" })) || {};
   const cur = await store.getWithMetadata("items", { type: "json" });
@@ -90,6 +143,15 @@ export default async (req) => {
     const items = await readItems(store, demo);
     return json(200, { items, at: new Date().toISOString(), canWrite, demo });
   }
+  if (req.method === "GET" && path[0] === "bins" && !path[1]) {
+    return json(200, { bins: await readBins(store, demo), at: new Date().toISOString(), canWrite, demo });
+  }
+  if (req.method === "GET" && path[0] === "photo" && ID_RE.test(path[1] || "") && ID_RE.test(path[2] || "") && !path[3]) {
+    const size = new URL(req.url).searchParams.get("size") === "full" ? "full" : "thumb";
+    const buf = await store.get(`photo/${path[1]}/${path[2]}/${size}`, { type: "arrayBuffer" });
+    if (!buf) return json(404, { error: "no such photo" });
+    return new Response(buf, { headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=31536000, immutable" } });
+  }
   if (!canWrite) return json(403, { error: "This link can only view the list." });
 
   if (req.method === "GET" && path[0] === "share") {
@@ -114,6 +176,60 @@ export default async (req) => {
       if (res.modified) return json(200, { ok: true });
     }
     return json(409, { error: "busy, try again" });
+  }
+
+  if (path[0] === "bins" && ID_RE.test(path[1] || "")) {
+    const id = path[1], now = new Date().toISOString();
+    if (demo) await readBins(store, demo);
+    if (!path[2] && req.method === "PUT") {
+      const b = await readJson(req);
+      const name = b && typeof b.name === "string" ? b.name.replace(/\s+/g, " ").trim() : "";
+      const notes = b && typeof b.notes === "string" ? b.notes.slice(0, 2000) : undefined;
+      if (!name || name.length > 80) return json(400, { error: "A bin needs a name (80 letters at most)." });
+      const stop = await updateJson(store, "bins", (bins) => {
+        if (demo && !bins[id] && Object.keys(bins).length >= 40) return json(400, { error: "The demo has enough bins." });
+        const old = bins[id] || { notes: "", photos: [], createdAt: now };
+        bins[id] = Object.assign({}, old, { name, notes: notes === undefined ? old.notes : notes, updatedAt: now });
+      });
+      return stop || json(200, { ok: true });
+    }
+    if (!path[2] && req.method === "DELETE") {
+      let pids = [];
+      const stop = await updateJson(store, "bins", (bins) => { pids = ((bins[id] || {}).photos || []).map(p => p.id); delete bins[id]; });
+      if (stop) return stop;
+      await dropPhotos(store, id, pids);
+      return json(200, { ok: true });
+    }
+    if (path[2] === "photos" && !path[3] && req.method === "POST") {
+      if (demo) return json(403, { error: "Photos are turned off in the demo. On your own copy, this is where the photo goes." });
+      const b = await readJson(req);
+      const full = jpegFrom(b && b.full, MAX_PHOTO_BYTES), thumb = jpegFrom(b && b.thumb, MAX_THUMB_BYTES);
+      if (!full || !thumb) return json(400, { error: "That photo did not come through (JPEG, 1.5 MB at most)." });
+      const pid = now.replace(/[^0-9]/g, "").slice(0, 14) + Math.random().toString(36).slice(2, 6);
+      const cur = (await readBins(store, demo))[id];
+      if (!cur) return json(404, { error: "No such bin. Make its label first." });
+      if ((cur.photos || []).length >= MAX_PHOTOS) return json(400, { error: "This bin has as many photos as it can hold. Delete an old one first." });
+      await store.set(`photo/${id}/${pid}/full`, full);
+      await store.set(`photo/${id}/${pid}/thumb`, thumb);
+      const stop = await updateJson(store, "bins", (bins) => {
+        if (!bins[id]) return json(404, { error: "No such bin." });
+        if ((bins[id].photos || []).length >= MAX_PHOTOS) return json(400, { error: "This bin has as many photos as it can hold. Delete an old one first." });
+        bins[id].photos = [{ id: pid, at: now }].concat(bins[id].photos || []);
+        bins[id].updatedAt = now;
+      });
+      if (stop) { await dropPhotos(store, id, [pid]); return stop; }
+      return json(200, { ok: true, photo: { id: pid, at: now } });
+    }
+    if (path[2] === "photos" && ID_RE.test(path[3] || "") && req.method === "DELETE") {
+      const pid = path[3];
+      const stop = await updateJson(store, "bins", (bins) => {
+        if (!bins[id]) return json(404, { error: "No such bin." });
+        bins[id].photos = (bins[id].photos || []).filter(p => p.id !== pid);
+      });
+      if (stop) return stop;
+      await dropPhotos(store, id, [pid]);
+      return json(200, { ok: true });
+    }
   }
 
   if (req.method === "POST" && path[0] === "ids") {

@@ -112,7 +112,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
 <div class="wrap">
   <header class="top">
     <h1>Freezer Scan</h1>
-    <p>Scan a freezer's label, then the food going in. <a id="labels-link" href="label.html" hidden>Make labels</a> <span id="share-wrap" hidden>· <a id="share-link" href="#">Send the family list</a></span></p>
+    <p>Scan a freezer's label, then the food going in. <a id="labels-link" href="label.html" hidden>Make labels</a> <span id="bins-wrap" hidden>· <a id="bins-link" href="bins.html">Storage bins</a></span> <span id="share-wrap" hidden>· <a id="share-link" href="#">Send the family list</a></span></p>
     <p id="moved" hidden style="background:#fff3cd;color:#664d03;border-radius:10px;padding:10px 12px;font-weight:600">This list has moved to <a href="https://freezer-scan.netlify.app/">freezer-scan.netlify.app</a>. Scan there from now on; scans here are not seen by the family list.</p>
   </header>
 
@@ -290,6 +290,8 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
                mode: /^(TAKE )?OUT$/.test(c) ? "out" : /^(PUT )?IN$/.test(c) ? "in" : null };
     }
     if (loc) return { kind: "loc", name: loc[1].replace(/\s*\n\s*/g, " ").trim() };
+    const bin = s.match(/^BIN:\s*([\s\S]*?)\s*\|?\s*(?:ID:\s*(\d{6}-\d{3,}))?\s*$/);
+    if (bin) return { kind: "bin", name: bin[1].replace(/\s+/g, " ").trim(), id: bin[2] || null };
     const id = s.match(/ID:\s*(\d{6}-\d{3,})/);
     const printed = s.match(/Printed:\s*(\d{4}-\d{2}-\d{2})/);
     if (!id && !printed) return { kind: "unknown", raw: s };
@@ -306,6 +308,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     const flush = () => { if (cur.length) out.push(cur.join("\n")); cur = []; };
     lines.forEach((l, i) => {
       if (/^(LOC|CMD):/.test(l)) { flush(); out.push(l); return; }
+      if (/^BIN:/.test(l)) flush();                // a bin label is BIN: name, then its ID
       cur.push(l);
       if (/ID:\s*\d{6}-\d{3,}/.test(l)) flush();
       else if (/Printed:\s*\d{4}-\d{2}-\d{2}/.test(l) && !/^ID:/.test(lines[i + 1] || "")) flush();
@@ -619,6 +622,15 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
         ? show("modeOut", "Take out: on", "Scan what you're taking", "Turns itself off after 90 s without a scan")
         : show("modeIn", "Putting in", shelf || "Scan what goes in", shelf ? "Items scanned next go in this freezer" : "");
     }
+    if (p.kind === "bin"){
+      // Bins have their own page: open it on this bin (not while unpacking a stored burst).
+      if (batch || !p.id) return show("err", "That's a storage bin", p.name, batch ? "Scan bins on their own" : "This bin label has no ID");
+      if (window.claude) return show("err", "That's a storage bin", p.name, "Bins live on freezer-scan.netlify.app");
+      try { closeCam(); } catch {}
+      const k = location.hash.match(/[#&]w=([\w-]+)/);
+      show("loc", "Storage bin", p.name, "Opening the bin…");
+      return void writing.then(() => { location.href = "bins.html" + (k ? "#w=" + k[1] + "&" : "#") + "bin=" + encodeURIComponent(p.id); });   // let a food scan still saving finish first
+    }
     if (p.kind === "unknown") return show("err", "Not one of your labels", p.raw.slice(0, 80), "No ID or print date in this code");
     if (p.kind === "loc"){
       setMode("in");                             // a shelf label always means putting in
@@ -809,7 +821,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
   // drop the tap's permission if a slow fetch sits in between). Messages here stay out of
   // the scan log: the link carries the view key.
   let shareUrl = null;
-  const shareText = "What's in our freezers (view only). Open it and add it to your home screen:";
+  const shareText = "What's in our freezers and storage bins (view only). Open it and add it to your home screen:";
   async function loadShare(){
     const k = (location.hash.match(/[#&]w=([\w-]+)/) || [])[1] || LS.get("fs.key");
     if (!k) return null;
@@ -834,6 +846,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     catch { window.prompt("Copy this link and text it:", url); }
   });
   if (!window.claude) loadShare().catch(() => {});
+  if (!window.claude) { $("bins-wrap").hidden = false; if (location.hash) $("bins-link").href = "bins.html" + location.hash; }
   if (!window.claude) { $("share-wrap").hidden = false; $("labels-link").hidden = false; if (location.hash) $("labels-link").href = "label.html" + location.hash; }
   if (window.claude) $("moved").hidden = false;
   (async () => {

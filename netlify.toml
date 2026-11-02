@@ -23,6 +23,11 @@
     X-Robots-Tag = "noindex, nofollow"
 
 [[headers]]
+  for = "/bins.html"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
+
+[[headers]]
   for = "/label.html"
   [headers.values]
     X-Robots-Tag = "noindex, nofollow"

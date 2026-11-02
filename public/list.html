@@ -44,6 +44,7 @@
 <div class="wrap">
   <h1>❄️ What's in the freezers</h1>
   <p class="sub" id="sub">Loading…</p>
+  <p class="sub"><a id="bins-link" href="bins.html">📦 Storage bins</a></p>
 
   <div class="search"><input id="q" type="search" placeholder="Search, e.g. chicken" autocomplete="off" aria-label="Search food"></div>
 
@@ -73,6 +74,7 @@
   const m = location.hash.match(/[#&][kw]=([\w-]+)/);
   if (m && m[1] !== "demo") LS.set("fl.key", m[1]);   // key stays in the address so "Open in Chrome" / home-screen icons carry it
   const key = m ? m[1] : (LS.get("fl.key") || LS.get("fs.key"));
+  if (m) $("bins-link").href = "bins.html" + location.hash;
 
   let items = [], freezer = LS.get("fl.freezer") || "", loadedAt = null;
   $("sort").value = LS.get("fl.sort") || "old";
