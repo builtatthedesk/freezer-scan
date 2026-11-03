@@ -84,6 +84,13 @@ button:disabled{opacity:.5;cursor:default}
 .audit ul{margin:0;padding-left:18px}
 .note{font-size:.85rem;color:var(--mut);margin:0}
 .inv{display:grid;gap:12px}
+.mover{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:grid;gap:10px;margin:0 0 12px}
+.mover input[type=search],.mover select{font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);width:100%}
+.mover .picks{display:grid;gap:2px;max-height:50vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px 0}
+.mover label.pick{display:grid;grid-template-columns:auto 1fr auto;gap:2px 10px;align-items:center;padding:6px 10px;cursor:pointer}
+.mover label.pick .w{grid-column:2/-1;font-family:var(--mono);font-size:.8rem;color:var(--mut)}
+.mover .row2{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.mover .row2 select{flex:1 1 180px;width:auto}
 .group{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .group h3{margin:0;font:700 1.15rem var(--display);padding:10px 14px;background:var(--frost-soft);display:flex;justify-content:space-between;gap:8px}
 .group h3 .n{font-family:var(--mono);font-size:.85rem;font-weight:500;color:var(--mut)}
@@ -211,7 +218,19 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
   </section>
 
   <section aria-label="What's in the freezer">
-    <div class="top"><h2>What's where</h2><span class="state" id="totals"></span></div>
+    <div class="top"><h2>What's where</h2><span class="state" id="totals"></span>
+      <button id="move-open" class="ghost" type="button" hidden>Move food without scanning</button></div>
+    <div id="mover" class="mover" hidden>
+      <b>Move to another freezer</b>
+      <input id="move-q" type="search" placeholder="Find food, e.g. salmon" autocomplete="off" aria-label="Find food to move">
+      <div id="move-picks" class="picks" role="group" aria-label="Food to move"></div>
+      <div class="row2">
+        <span>To</span>
+        <select id="move-to" aria-label="Move to which freezer"></select>
+        <button id="move-go" class="primary" type="button" disabled>Move</button>
+        <button id="move-cancel" class="ghost" type="button">Cancel</button>
+      </div>
+    </div>
     <div id="inv" class="inv">
       <div class="empty">
         <strong>Nothing recorded yet.</strong>
@@ -242,7 +261,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
   const OUT_IDLE_MS = 90e3;          // back to In after this long without a scan
   let outTimer = 0, outLast = 0;     // timers stall while a phone sleeps; outLast is the real clock
   let roundStart = Number(LS.get("fs.round")) || 0;   // when the shelf label was scanned
-  let undo = null;                   // {id, before}
+  let undo = null;                   // {id, before}, or {batch: [[id, before], ...]} after a move
   let writing = Promise.resolve();   // one write at a time
 
   // ---------------------------------------------------------------- sound
@@ -352,7 +371,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     return !/Printed:|ID:/.test(t);
   }
   function onKey(e){
-    if (!armed || e.target === $("manual-in")) return;
+    if (!armed || e.target === $("manual-in") || (e.target.closest && e.target.closest("#mover"))) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === "Enter") { buf += "\n"; e.preventDefault(); }
     else if (e.key === "Tab") { buf += "\n"; e.preventDefault(); }
@@ -399,7 +418,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
   showGap();
   document.addEventListener("keydown", onKey, true);
   document.addEventListener("paste", (e) => {
-    if (!armed || e.target === $("manual-in")) return;
+    if (!armed || e.target === $("manual-in") || (e.target.closest && e.target.closest("#mover"))) return;
     const s = (e.clipboardData && e.clipboardData.getData("text")) || "";
     if (s) { e.preventDefault(); route(s, []); }
   });
@@ -663,11 +682,11 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     return show("same", "Already in this freezer", p.text, meta);
   }
 
-  function save(id, before, body){
+  function save(id, before, body, quiet){
     items.set(id, body);                         // show it now; the snapshot confirms
     undo = { id, before };
     $("undo").disabled = false;
-    render();
+    if (!quiet) render();
     const ref = db.collection("items").doc(id);
     writing = writing.then(() => ref.set(body)).catch((e) => {
       if (e && e.code === "invalid_argument") { writable = false; }
@@ -679,13 +698,15 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
 
   $("undo").addEventListener("click", () => {
     if (!undo || !db) return;
-    const { id, before } = undo; undo = null; $("undo").disabled = true;
-    const ref = db.collection("items").doc(id);
-    if (before) { items.set(id, before); writing = writing.then(() => ref.set(before)); }
-    else { items.delete(id); writing = writing.then(() => ref.delete()); }
+    const batch = undo.batch || [[undo.id, undo.before]]; undo = null; $("undo").disabled = true;
+    for (const [id, before] of batch) {
+      const ref = db.collection("items").doc(id);
+      if (before) { items.set(id, before); writing = writing.then(() => ref.set(before)); }
+      else { items.delete(id); writing = writing.then(() => ref.delete()); }
+    }
     writing = writing.catch(() => {});
     render();
-    show("same", "Undone", (before && before.text) || "Removed the last item", "");
+    show("same", "Undone", batch.length > 1 ? batch.length + " packs put back" : ((batch[0][1] && batch[0][1].text) || "Removed the last item"), "");
   });
 
   $("audit-out").addEventListener("click", () => {
@@ -693,6 +714,92 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     for (const [id, it] of missing()) save(id, it, Object.assign({}, it, { status: "out", outAt: now }));
     undo = null; $("undo").disabled = true;
     renderAudit();
+  });
+
+  // ---------------------------------------------------------------- move without scanning
+  // A bag of food carried to another freezer: tick the foods, pick the freezer, done.
+  // One food (any capitals, a date typed at the end ignored) = every pack of it.
+  const foodKey = (t) => String(t || "").replace(/(?:^|\s+)(?:\/\s*)?\d{1,2}-\d{1,2}-\d{2}(?:\d{2})?\s*$/, "").trim().toLowerCase();
+  const moveSel = new Set();
+  function moveFoods(){
+    const m = new Map();
+    for (const [id, it] of items) {
+      if (it.status !== "in") continue;
+      const k = foodKey(it.text);
+      const f = m.get(k) || { key: k, name: it.text.replace(/(?:^|\s+)(?:\/\s*)?\d{1,2}-\d{1,2}-\d{2}(?:\d{2})?\s*$/, "").trim() || it.text, ids: [], where: new Set() };
+      f.ids.push(id); f.where.add(it.shelf || "No freezer set"); m.set(k, f);
+    }
+    return [...m.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }));
+  }
+  let moverSig = "";
+  function renderMover(force){
+    if ($("mover").hidden) return;
+    const q = $("move-q").value.trim().toLowerCase();
+    const foods = moveFoods();
+    const freezers = [...new Set([...items.values()].map(it => it.shelf).filter(Boolean).concat(shelf ? [shelf] : []))].sort((a, b) => a.localeCompare(b));
+    const sig = JSON.stringify([q, foods.map(f => [f.key, f.ids.length, [...f.where]]), freezers]);
+    if (!force && sig === moverSig) return updateMoveBtn();   // a poll with nothing new: keep scroll and focus
+    moverSig = sig;
+    const box = $("move-picks"); box.replaceChildren();
+    for (const f of foods) {
+      if (q && !f.key.includes(q) && !moveSel.has(f.key)) continue;
+      const l = document.createElement("label"); l.className = "pick";
+      const c = document.createElement("input"); c.type = "checkbox"; c.checked = moveSel.has(f.key);
+      c.addEventListener("change", () => { c.checked ? moveSel.add(f.key) : moveSel.delete(f.key); updateMoveBtn(); });
+      const t = document.createElement("span"); t.textContent = f.name;
+      const n = document.createElement("span"); n.className = "age"; n.textContent = "×" + f.ids.length;
+      const w = document.createElement("span"); w.className = "w"; w.textContent = [...f.where].join(" · ");
+      l.append(c, t, n, w); box.append(l);
+    }
+    if (!box.children.length) { const e = document.createElement("p"); e.className = "note"; e.style.padding = "6px 10px"; e.textContent = q ? "No food matches." : "Nothing in the freezers."; box.append(e); }
+    const keep = $("move-to").value;
+    const names = freezers;
+    const sel = $("move-to"); sel.replaceChildren();
+    for (const nm of names) sel.append(new Option(nm, nm));
+    sel.append(new Option("Another freezer…", "__new"));
+    sel.value = names.includes(keep) || keep === "__new" ? keep : (names[0] || "__new");
+    updateMoveBtn();
+  }
+  function moveTargets(){
+    const keys = moveSel, out = [];
+    for (const f of moveFoods()) if (keys.has(f.key)) out.push(...f.ids);
+    return out;
+  }
+  function updateMoveBtn(){
+    const to = $("move-to").value;      // packs already in that freezer don't count
+    const n = moveTargets().filter(id => to === "__new" || (items.get(id).shelf || "") !== to).length;
+    $("move-go").disabled = !n;
+    $("move-go").textContent = n ? `Move ${n} pack${n === 1 ? "" : "s"}` : "Move";
+  }
+  $("move-open").addEventListener("click", () => {
+    moveSel.clear(); $("move-q").value = ""; $("mover").hidden = false; $("move-open").hidden = true;
+    renderMover(true); $("move-q").focus();
+  });
+  $("move-cancel").addEventListener("click", () => { $("mover").hidden = true; $("move-open").hidden = false; });
+  $("move-q").addEventListener("input", renderMover);
+  $("move-to").addEventListener("change", updateMoveBtn);
+  $("move-go").addEventListener("click", () => {
+    let to = $("move-to").value;
+    if (to === "__new") {
+      to = (prompt("Which freezer? (e.g. Garage freezer)") || "").replace(/\s+/g, " ").trim();
+      if (!to) return;
+      if (to.length > 60) return show("err", "That freezer name is too long", to.slice(0, 60) + "…", "Keep it under 60 letters");
+    }
+    if (!db || !writable) return show("err", "You can't change this list", "", "Open the page from your scanning link");
+    const ids = moveTargets().filter(id => (items.get(id).shelf || "") !== to);
+    if (!ids.length) return show("same", "Already there", to, "Nothing to move");
+    const now = new Date().toISOString(), batch = [];
+    const movedFoods = new Set(ids.map(id => foodKey(items.get(id).text)));
+    for (const id of ids) {
+      const before = items.get(id);
+      batch.push([id, before]);
+      save(id, before, Object.assign({}, before, { shelf: to }), true);   // not a scan, so lastScan stays
+    }
+    render();
+    undo = { batch }; $("undo").disabled = false;
+    $("mover").hidden = true; $("move-open").hidden = false;
+    const one = movedFoods.size === 1 ? moveFoods().find(f => movedFoods.has(f.key)) : null;
+    show("moved", `Moved ${ids.length} pack${ids.length === 1 ? "" : "s"} to ${to}`, one ? one.name : movedFoods.size + " foods", "Undo puts them back");
   });
 
   // ---------------------------------------------------------------- render
@@ -729,6 +836,8 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
   }
   function render(){
     renderAudit();
+    $("move-open").hidden = !db || !writable || !!window.claude || !$("mover").hidden || ![...items.values()].some(it => it.status === "in");
+    renderMover();
     const inv = $("inv");
     const live = [...items].filter(([, it]) => it.status === "in");
     const used = [...items].filter(([, it]) => it.status === "out");
