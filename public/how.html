@@ -37,6 +37,8 @@
   code { font-size:.9em; background:var(--soft); padding:1px 5px; border-radius:5px; overflow-wrap:anywhere; }
   details { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 14px; margin:8px 0; }
   summary { cursor:pointer; font-weight:600; }
+  pre.prompt { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; font-size:13px; line-height:1.45; max-height:420px; overflow:auto; margin:10px 0 0; }
+  button.copy { font:inherit; font-weight:600; padding:10px 16px; border-radius:10px; border:1px solid var(--accent); background:var(--accent); color:#fff; min-height:44px; cursor:pointer; }
   footer { margin-top:48px; color:var(--muted); font-size:14px; border-top:1px solid var(--line); padding-top:16px; }
   @media (max-width: 520px) { .hide-sm { display:none; } }
 /* Netlify's free plan pins a "Powered by Netlify" badge to the bottom corner: room so it covers nothing. */
@@ -92,6 +94,47 @@
   </ol>
   <div class="note">Label printer from a computer: choose the Brother printer, paper size 29 mm × 90 mm, scale 100%. Bluetooth scanner: put it in keyboard (HID) mode and pair it with the phone; for the Tera, scan "Bluetooth HID" then "Pairing" from its manual, or hold the trigger for 8 seconds.</div>
 
+  <h2>Or build your own with Claude Code</h2>
+  <p>Rather have your own version built from nothing, your way? <a href="https://claude.com/claude-code">Claude Code</a> is an AI helper that writes and runs code for you. Copy this prompt, paste it in, and change anything you like (your freezers, your words). It explains each step as it goes and asks before putting anything online.</p>
+  <p><button class="copy" id="copy-prompt" type="button">Copy the prompt</button> <span id="copy-ok" style="color:var(--muted);font-size:15px" aria-live="polite"></span></p>
+  <details><summary>Show the prompt</summary><pre class="prompt" id="prompt">Build me a small web app called "Freezer Scan" that tracks food in several home freezers using printed QR labels. I have no coding background, so explain each step in plain English and keep the code simple.
+
+How it is built:
+- A static website hosted on Netlify's free plan, plus ONE Netlify Function as the API. Store all data in Netlify Blobs. No other server, no database service, no paid services. Use compare-and-swap (etags) so two phones scanning at once can't overwrite each other.
+- Two passwords set as Netlify environment variables: WRITE_KEY (can scan and change things) and READ_KEY (view only). Each at least 16 letters, numbers, "_" or "-", and different; the API refuses to run otherwise.
+- The key lives in the link after the "#" so it is never sent in a page request: scanning link https://&lt;site&gt;/#w=&lt;WRITE_KEY&gt;, family link https://&lt;site&gt;/list.html#k=&lt;READ_KEY&gt;. The pages send the key to the API in a header. If the key is missing or wrong, show "This link is missing its key."
+- Add a "Deploy to Netlify" button to the README so someone else can make their own copy and be asked for the two keys.
+
+Labels (QR codes):
+- A food label's QR code holds three lines:
+    &lt;food name&gt;
+    Printed: YYYY-MM-DD
+    ID: YYMMDD-NNN
+  The ID is unique per pack, handed out by the API from a daily counter.
+- A freezer label holds "LOC: &lt;freezer name&gt;". A take-out label holds "CMD: TAKE OUT". A storage-bin label holds "BIN: &lt;name&gt;" plus its own ID line.
+- A label-maker page that prints a sheet of cut-out labels on plain paper (two columns with dashed cut lines, fits Letter and A4, printed at 100%; bin labels twice as big). Tell the user to tape over paper labels. Optionally also support a Brother label printer at 29 x 90 mm.
+
+Scanning page (write key):
+- "Scan with camera" uses the phone camera to read QR codes (bundle a QR-reading library; no app install). Also accept a Bluetooth scanner that types like a keyboard, and a box to type or paste a label by hand.
+- Scan a freezer label to choose the freezer, then food goes "in" to that freezer. Scan TAKE OUT, then food goes "out" (used up). Beep and show what happened.
+- "Move food without scanning": tick foods, pick a freezer, Move, with Undo.
+- "Send the family list" shares the view-only link.
+
+Family list (read key, view only):
+- Every food A to Z, packs of the same food combined, with how many and which freezer. Search box and a filter by freezer.
+- A "Use these first" box for the oldest packs (two months or more).
+- A Print button that prints the list for the fridge (A to Z, count, freezer, age of oldest pack); pick a freezer first to print just that one.
+
+Storage bins:
+- Scan a bin label to see its photos and notes; add a photo (shrink it on the phone before upload) and a few words. Search across all bins' notes. Viewable with the read key, changeable only with the write key.
+
+Free demo:
+- An optional DEMO=1 setting where the key "demo" opens a separate sample list anyone can try, reset to sample food every day, with photo uploads turned off.
+
+Also: tell search engines not to index the pages, make everything work on Android Chrome at phone size, and leave room at the bottom for Netlify's free-plan badge.
+
+Before you deploy anything or publish it anywhere, stop, show me what you built and ask me to review it. Only deploy after I say yes.</pre></details>
+
   <h2>Questions</h2>
   <details><summary>I moved food to another freezer without scanning it. Now what?</summary><p>On the scanning page, under "What's where", tap <b>Move food without scanning</b>. Tick the foods (all their packs move), pick the freezer, tap Move. Undo puts them back if you picked wrong.</p></details>
   <details><summary>Can I print the list?</summary><p>Yes. On the family list tap <b>Print</b>: A to Z (a page for most freezers), with how many of each, which freezer and how old the oldest pack is. Pick a freezer first to print just that one.</p></details>
@@ -104,5 +147,19 @@
 
   <footer>Made by <a href="https://github.com/builtatthedesk">Built at the Desk</a>.</footer>
 </div>
+<script>
+document.getElementById("copy-prompt").addEventListener("click", async () => {
+  const pre = document.getElementById("prompt"), ok = document.getElementById("copy-ok");
+  ok.textContent = "";
+  try { await navigator.clipboard.writeText(pre.textContent); ok.textContent = "Copied. Paste it into Claude Code."; }
+  catch {
+    pre.closest("details").open = true;
+    const r = document.createRange(); r.selectNodeContents(pre);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    let copied = false; try { copied = document.execCommand("copy"); } catch {}
+    ok.textContent = copied ? "Copied. Paste it into Claude Code." : "Selected. Long-press the text and tap Copy.";
+  }
+});
+</script>
 </body>
 </html>
