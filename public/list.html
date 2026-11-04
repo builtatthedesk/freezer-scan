@@ -62,6 +62,7 @@
   @media (prefers-color-scheme: dark) { mark { background:#5a4b00; } }
 /* Netlify's free plan pins a "Powered by Netlify" badge to the bottom corner: room so it covers nothing. */
 @media screen { body::after { content:""; display:block; height:72px; } }
+@media print { #nl-badge-frame, [id^="nl-badge"] { display:none !important; } }
 </style>
 </head>
 <body>
@@ -303,6 +304,13 @@
       loadedAt = new Date();
       $("sub").textContent = (j.demo ? "Demo list with sample food · " : "") + "Updated " + loadedAt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
       render();
+      // Opened from the scanning page's "Print the list": print once, then drop the flag
+      // so a reload or the home-screen icon doesn't print again.
+      if (/[#&]print\b/.test(location.hash)) {
+        history.replaceState(null, "", location.pathname + location.hash.replace(/&print\b/, ""));
+        freezer = ""; render();   // print every freezer, whatever was last picked on this phone
+        setTimeout(() => { buildPaper(); window.print(); }, 300);
+      }
     } catch (e) {
       $("sub").textContent = "Couldn't load the list (" + e.message + "). Pull down to try again.";
     }

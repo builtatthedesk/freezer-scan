@@ -54,6 +54,7 @@
   }
 /* Netlify's free plan pins a "Powered by Netlify" badge to the bottom corner: room so it covers nothing. */
 @media screen { body::after { content:""; display:block; height:72px; } }
+@media print { #nl-badge-frame, [id^="nl-badge"] { display:none !important; } }
 </style>
 <style id="page-size">@page { size: 90mm 29mm; margin: 0; }</style>
 </head>

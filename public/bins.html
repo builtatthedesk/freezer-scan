@@ -54,6 +54,7 @@
   .camview button { color:#fff; border-color:rgba(255,255,255,.5); justify-content:center; }
 /* Netlify's free plan pins a "Powered by Netlify" badge to the bottom corner: room so it covers nothing. */
 @media screen { body::after { content:""; display:block; height:72px; } }
+@media print { #nl-badge-frame, [id^="nl-badge"] { display:none !important; } }
 </style>
 </head>
 <body>
