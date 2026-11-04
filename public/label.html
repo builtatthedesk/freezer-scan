@@ -52,6 +52,8 @@
     /* Bin labels on paper are twice as big, to read across an attic. */
     .sheet.paper img.big { grid-column:1 / -1; justify-self:center; width:7.4in; height:2.39in; }
   }
+/* Netlify's free plan pins a "Powered by Netlify" badge to the bottom corner: room so it covers nothing. */
+@media screen { body::after { content:""; display:block; height:72px; } }
 </style>
 <style id="page-size">@page { size: 90mm 29mm; margin: 0; }</style>
 </head>

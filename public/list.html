@@ -60,6 +60,8 @@
   }
   mark { background:#fff3a3; color:inherit; border-radius:3px; }
   @media (prefers-color-scheme: dark) { mark { background:#5a4b00; } }
+/* Netlify's free plan pins a "Powered by Netlify" badge to the bottom corner: room so it covers nothing. */
+@media screen { body::after { content:""; display:block; height:72px; } }
 </style>
 </head>
 <body>
