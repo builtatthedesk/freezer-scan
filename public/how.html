@@ -39,6 +39,8 @@
   summary { cursor:pointer; font-weight:600; }
   pre.prompt { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; font-size:13px; line-height:1.45; max-height:420px; overflow:auto; margin:10px 0 0; }
   button.copy { font:inherit; font-weight:600; padding:10px 16px; border-radius:10px; border:1px solid var(--accent); background:var(--accent); color:#fff; min-height:44px; cursor:pointer; }
+  .video { position:relative; aspect-ratio:16/9; margin:18px 0 6px; border-radius:12px; overflow:hidden; background:#000; }
+  .video iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
   footer { margin-top:48px; color:var(--muted); font-size:14px; border-top:1px solid var(--line); padding-top:16px; }
   @media (max-width: 520px) { .hide-sm { display:none; } }
 /* Netlify's free plan pins a "Powered by Netlify" badge to the bottom corner: room so it covers nothing. */
@@ -56,6 +58,10 @@
     <a class="btn" href="https://freezer-scan.netlify.app/label.html#w=demo">Try the label maker</a>
   </div>
   <p style="font-size:14px;color:var(--muted)">The demo is a sample list anyone can play with. It resets every day.</p>
+
+  <h2>Watch it (5 minutes)</h2>
+  <div class="video"><iframe src="https://www.youtube-nocookie.com/embed/y8Bh9zIMn9s" title="Freezer Scan in 5 minutes" loading="lazy" referrerpolicy="strict-origin" allow="encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>
+  <p style="font-size:14px;color:var(--muted)">Or <a href="https://youtu.be/y8Bh9zIMn9s">watch on YouTube</a>.</p>
 
   <h2>How it works</h2>
   <div class="story">
