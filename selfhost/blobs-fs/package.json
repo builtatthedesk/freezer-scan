@@ -1,0 +1,7 @@
+{
+  "name": "@netlify/blobs",
+  "version": "0.0.0-selfhost",
+  "type": "module",
+  "exports": "./index.mjs",
+  "description": "Self-hosting stand-in for @netlify/blobs: the few calls api.mjs uses, stored as files in DATA_DIR."
+}

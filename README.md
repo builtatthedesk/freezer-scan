@@ -67,6 +67,12 @@ npm install
 netlify dev
 ```
 
+### Self-host without Netlify
+
+`Dockerfile` + [`selfhost/`](selfhost/README.md) run the same pages and API in one
+container, storing the list as files. Guides for a VPS (Caddy HTTPS) and a home
+server (Tailscale HTTPS) are in [selfhost/README.md](selfhost/README.md).
+
 ## Licence
 
 MIT. Built at the Desk.

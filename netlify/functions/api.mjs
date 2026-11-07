@@ -71,7 +71,7 @@ async function dropPhotos(store, binId, pids){
 function keyProblem(){
   const ok = (k) => typeof k === "string" && /^[\w-]{16,}$/.test(k);
   if (!ok(process.env.WRITE_KEY) || !ok(process.env.READ_KEY))
-    return "WRITE_KEY and READ_KEY must each be at least 16 letters, numbers, _ or - (set them in Netlify, then redeploy).";
+    return "WRITE_KEY and READ_KEY must each be at least 16 letters, numbers, _ or - (set them in Netlify or your .env file, then redeploy or restart).";
   if (process.env.WRITE_KEY === process.env.READ_KEY) return "WRITE_KEY and READ_KEY must be different.";
   return null;
 }

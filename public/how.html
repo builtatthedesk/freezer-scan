@@ -142,6 +142,32 @@ Also: tell search engines not to index the pages, make everything work on Androi
 
 Before you deploy anything or publish it anywhere, stop, show me what you built and ask me to review it. Only deploy after I say yes.</pre></details>
 
+  <h2>Or host it yourself</h2>
+  <p>Rather not use Netlify? The same app runs in one small Docker container, and your list is kept as plain files on your own machine. It needs a little comfort with a command line. Step-by-step instructions: <a href="https://github.com/builtatthedesk/freezer-scan/tree/main/selfhost">selfhost guide on GitHub</a>.</p>
+  <div class="note"><b>It has to be https.</b> Phones only let a web page use the camera on an <code>https://</code> address, so a plain <code>http://192.168.1.20</code> link opens but can't scan. Both options below take care of that.</div>
+  <details><summary><b>On a VPS</b> (a rented server, reachable from anywhere)</summary>
+    <p>Any small Linux server works, from about $5 a month; 1 CPU and 512 MB of memory is plenty. You also need a domain name, like <code>freezer.yourname.com</code>.</p>
+    <ol class="setup">
+      <li>Install Docker on the server, and point your domain at the server's IP address (an "A record" at your domain company).</li>
+      <li>Download the code, copy <code>selfhost/env.example</code> to <code>.env</code>, and fill in your domain and your two passwords.</li>
+      <li>Run <code>docker compose -f selfhost/docker-compose.vps.yml --env-file .env up -d --build</code>. Caddy, the web server in front, gets the https certificate by itself.</li>
+      <li>Open <code>https://</code><i>your domain</i><code>/#w=</code><i>your scanning password</i> on your phone and add it to the home screen.</li>
+    </ol>
+    <p>Open ports 80 and 443 in the server's firewall, nothing else.</p>
+  </details>
+  <details><summary><b>On a little server at home</b> (Raspberry Pi, NAS, old PC)</summary>
+    <p>Nothing is opened to the internet. <a href="https://tailscale.com">Tailscale</a> (free for personal use) gives the server a private https address that only your own devices can reach, at home or away.</p>
+    <ol class="setup">
+      <li>Install Docker and Tailscale on the server. In Tailscale's admin page, turn on MagicDNS and HTTPS certificates.</li>
+      <li>Download the code, copy <code>selfhost/env.example</code> to <code>.env</code>, and fill in your two passwords.</li>
+      <li>Run <code>docker compose -f selfhost/docker-compose.home.yml --env-file .env up -d --build</code>, then <code>sudo tailscale serve --bg 8080</code>.</li>
+      <li>Your address looks like <code>https://pi.tail1234.ts.net</code>. Add <code>/#w=</code><i>your scanning password</i> for your scanning link.</li>
+      <li>Every phone that uses it, yours and the family's, needs the Tailscale app signed in to your account.</li>
+    </ol>
+    <p>Don't want Tailscale on everyone's phone? A free Cloudflare Tunnel gives the home server a normal https address without opening ports (you need a domain on Cloudflare; see Cloudflare's "Tunnel" guide).</p>
+  </details>
+  <p style="font-size:15px;color:var(--muted)">Self-hosted, backups are your job: the guide has a one-line copy command to run nightly. No Netlify badge, no usage limits.</p>
+
   <h2>Questions</h2>
   <details><summary>I moved food to another freezer without scanning it. Now what?</summary><p>On the scanning page, under "What's where", tap <b>Move food without scanning</b>. Tick the foods (all their packs move), pick the freezer, tap Move. Undo puts them back if you picked wrong.</p></details>
   <details><summary>Can I print the list?</summary><p>Yes. On the family list tap <b>Print</b>: A to Z (a page for most freezers), with how many of each, which freezer and how old the oldest pack is. Pick a freezer first to print just that one.</p></details>

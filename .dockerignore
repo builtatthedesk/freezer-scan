@@ -1,0 +1,6 @@
+node_modules
+.git
+.netlify
+docs
+.env
+data

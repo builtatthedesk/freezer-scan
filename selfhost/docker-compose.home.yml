@@ -1,0 +1,16 @@
+# Freezer Scan on a small server at home (Raspberry Pi, NAS, old PC, Proxmox LXC).
+# No ports are opened to the internet. HTTPS comes from Tailscale (see selfhost/README.md).
+#   1. cp selfhost/env.example .env   and fill in WRITE_KEY and READ_KEY.
+#   2. docker compose -f selfhost/docker-compose.home.yml --env-file .env up -d --build
+#   3. sudo tailscale serve --bg 8080
+services:
+  app:
+    build: ..
+    restart: unless-stopped
+    env_file: ../.env
+    ports: ["127.0.0.1:8080:8080"]   # only Tailscale (on this machine) reaches it
+    volumes:
+      - freezer_data:/data
+volumes:
+  freezer_data:
+    name: freezer_data

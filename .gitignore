@@ -5,3 +5,5 @@ node_modules/
 docs/*.pdf
 docs/front.png
 docs/storage-mode.png
+.env
+data/

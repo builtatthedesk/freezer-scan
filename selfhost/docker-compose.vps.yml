@@ -1,0 +1,25 @@
+# Freezer Scan on a VPS with a domain name. Caddy gets the HTTPS certificate on its own.
+#   1. Point your domain's DNS (an A record) at the VPS's IP address.
+#   2. cp selfhost/env.example .env   and fill it in (DOMAIN, WRITE_KEY, READ_KEY).
+#   3. docker compose -f selfhost/docker-compose.vps.yml --env-file .env up -d --build
+services:
+  app:
+    build: ..
+    restart: unless-stopped
+    env_file: ../.env
+    volumes:
+      - freezer_data:/data
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [app]
+volumes:
+  caddy_data:
+  freezer_data:
+    name: freezer_data
