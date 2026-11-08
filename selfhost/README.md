@@ -65,17 +65,21 @@ any ports.
 ## Backups
 
 The whole list (food, bins, bin photos) lives in the `freezer_data` Docker volume.
-Copy it out nightly (cron), using the compose file you started with:
+Copy it out nightly (cron), using the compose file you started with
+(`docker-compose.home.yml` or `docker-compose.vps.yml`):
 
 ```bash
-docker compose -f selfhost/docker-compose.home.yml cp app:/data ./backup-$(date +%F)
+F=selfhost/docker-compose.home.yml
+mkdir -p ../freezer-backups && docker compose -f $F cp app:/data ../freezer-backups/backup-$(date +%F)
 ```
+
+In a crontab line, write `%` as `\%` and `cd` into the repo folder first.
 
 To restore, copy it back, give the files to the app's user, and restart:
 
 ```bash
-F=selfhost/docker-compose.home.yml
-docker compose -f $F cp ./backup-2026-11-07/. app:/data
+F=selfhost/docker-compose.home.yml   # or .vps.yml
+docker compose -f $F cp ../freezer-backups/backup-2026-11-07/. app:/data
 docker compose -f $F exec -u root app chown -R node:node /data
 docker compose -f $F restart app
 ```

@@ -166,6 +166,31 @@ Before you deploy anything or publish it anywhere, stop, show me what you built 
     </ol>
     <p>Don't want Tailscale on everyone's phone? A free Cloudflare Tunnel gives the home server a normal https address without opening ports (you need a domain on Cloudflare; see Cloudflare's "Tunnel" guide).</p>
   </details>
+  <h3 style="margin-top:22px">Let Claude Code set it up for you</h3>
+  <p>Have <a href="https://claude.com/claude-code">Claude Code</a> on the server (or on a computer that can reach it)? Copy this, fill in the line about your setup, and paste it in. It follows the guide, asks before opening ports or changing the firewall, and finishes by giving you your two links.</p>
+  <p><button class="copy" id="copy-selfhost" data-target="selfhost-prompt" data-ok="copy-selfhost-ok" type="button">Copy the self-host prompt</button> <span id="copy-selfhost-ok" style="color:var(--muted);font-size:15px" aria-live="polite"></span></p>
+  <details><summary>Show the prompt</summary><pre class="prompt" id="selfhost-prompt">Help me self-host Freezer Scan, a small freezer-inventory web app, on my own server. I'm not a programmer, so explain each step in plain English, one at a time, and tell me what each command does before you run it.
+
+The code is at https://github.com/builtatthedesk/freezer-scan. Read selfhost/README.md first: it explains the Dockerfile, the two Docker Compose setups and the exact commands. Follow it rather than inventing your own setup.
+
+My setup (fill in or delete): [a small server at home: Raspberry Pi / NAS / old PC / Proxmox] OR [a VPS, with the domain name ____ ]. It runs [Linux / I'm not sure].
+
+Please:
+1. Check what's installed (Docker, Docker Compose, git) and install what's missing.
+2. Clone the repo and copy selfhost/env.example to .env. Generate the two passwords with a command (for example: openssl rand -base64 18 | tr '+/' '-_'), each different, and write them straight into .env without printing them. Set my time zone, and on a VPS my domain.
+3. VPS only, before starting anything: check that my domain already points at this server's IP address. If it doesn't, stop and tell me what to set at my domain company.
+4. Start the right setup: docker-compose.home.yml for a home server, docker-compose.vps.yml for a VPS.
+5. Set up https, because the phone camera only works on https:
+   - Home server: Tailscale. Walk me through installing it and signing in, turning on MagicDNS and HTTPS certificates in the Tailscale admin page, then run "sudo tailscale serve --bg 8080".
+   - VPS: Caddy gets the certificate by itself. If you set up a firewall, keep SSH (port 22) open and allow 80 and 443 (plus 443/udp), and check SSH still works before turning the firewall on.
+6. Test it: open the https address and check the page loads, then check the list answers, e.g. curl -H "x-key: &lt;the family password from .env&gt;" https://&lt;address&gt;/api/items should return JSON.
+7. Write my two links to a private file (e.g. ~/freezer-links.txt, readable only by me) instead of showing them in chat, and tell me where it is: the scanning link (address + /#w= + scanning password) and the family link (address + /list.html#k= + family password).
+8. Nightly backup: write a small backup script that cd's into the repo and runs the backup command from selfhost/README.md with the compose file I started with, saves into a backups folder outside the repo, and keeps the newest 14 (deleting older backups inside that script is OK). Run it from cron (remember % must be escaped in crontab). Tell me the backups are on the same disk as the app, so I should copy them elsewhere now and then. Show me how to restore one.
+
+Rules:
+- Ask me before anything that opens ports to the internet, changes the firewall, installs system software, or deletes anything (except the old-backup cleanup above).
+- Don't change the app's code. If something doesn't work, tell me what you found before changing anything.
+- When you finish, write a short "how to update, back up and restore" note in a file next to the code.</pre></details>
   <p style="font-size:15px;color:var(--muted)">Self-hosted, backups are your job: the guide has a one-line copy command to run nightly. No Netlify badge, no usage limits.</p>
 
   <h2>Questions</h2>
@@ -181,8 +206,8 @@ Before you deploy anything or publish it anywhere, stop, show me what you built 
   <footer>Made by <a href="https://github.com/builtatthedesk">Built at the Desk</a>.</footer>
 </div>
 <script>
-document.getElementById("copy-prompt").addEventListener("click", async () => {
-  const pre = document.getElementById("prompt"), ok = document.getElementById("copy-ok");
+document.querySelectorAll("button.copy").forEach((btn) => btn.addEventListener("click", async () => {
+  const pre = document.getElementById(btn.dataset.target || "prompt"), ok = document.getElementById(btn.dataset.ok || "copy-ok");
   ok.textContent = "";
   try { await navigator.clipboard.writeText(pre.textContent); ok.textContent = "Copied. Paste it into Claude Code."; }
   catch {
@@ -192,7 +217,7 @@ document.getElementById("copy-prompt").addEventListener("click", async () => {
     let copied = false; try { copied = document.execCommand("copy"); } catch {}
     ok.textContent = copied ? "Copied. Paste it into Claude Code." : "Selected. Long-press the text and tap Copy.";
   }
-});
+}));
 </script>
 </body>
 </html>
