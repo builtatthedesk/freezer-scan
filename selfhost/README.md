@@ -14,6 +14,9 @@ swapped for plain files (`blobs-fs/`). Nothing in `public/` or `api.mjs` changes
 | `docker-compose.home.yml` | Small server at home, HTTPS from Tailscale, no open ports |
 | `env.example` | The settings: `WRITE_KEY`, `READ_KEY`, `TZ_NAME`, `DOMAIN` |
 
+If `docker` says *permission denied ... docker.sock*, put `sudo` in front of the
+`docker compose` commands (or add yourself to the `docker` group and log in again).
+
 **HTTPS is not optional.** Phone browsers only allow the camera on `https://`
 pages, so a plain `http://192.168.x.x:8080` link loads but can't scan with the camera.
 
