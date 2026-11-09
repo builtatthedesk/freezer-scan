@@ -53,6 +53,8 @@ LP_PYTHON = LP_DIR / ".venv" / "Scripts" / "python.exe"
 PRINTER = os.environ.get("LABEL_PRINTER", "Garage QL-820NWB") if (LP_DIR / "labelprint.py").exists() else ""
 PRINT_LOCK = threading.Lock()   # one job at a time, in order
 KEEP_AWAKE_SECS = int(os.environ.get("KEEP_AWAKE_SECS", "60"))
+# Under pythonw (autostart) every child would otherwise flash a console window.
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def printer_addr():
@@ -140,7 +142,8 @@ def print_label(png: bytes) -> None:
         # 9100 on the QL-8xx never answers a status request, hence --no-verify.
         cmd = [str(LP_PYTHON), "labelprint.py", "--printer", PRINTER, "--no-verify", "image", str(path)]
         proc = subprocess.run(cmd, cwd=str(LP_DIR), capture_output=True, text=True,
-                              encoding="utf-8", timeout=60)
+                              encoding="utf-8", timeout=60, stdin=subprocess.DEVNULL,
+                              creationflags=NO_WINDOW)
     if proc.returncode != 0 or "sent " not in proc.stdout:
         raise RuntimeError(f"labelprint exit {proc.returncode}: {(proc.stderr or proc.stdout)[-300:]}")
 
@@ -153,7 +156,8 @@ def ask_claude(jpeg: bytes) -> list[dict]:
                "--allowedTools", "Read", "--model", MODEL,
                "--output-format", "json", "--no-session-persistence"]
         proc = subprocess.run(cmd, cwd=tmp, capture_output=True, text=True,
-                              encoding="utf-8", timeout=TIMEOUT)
+                              encoding="utf-8", timeout=TIMEOUT, stdin=subprocess.DEVNULL,
+                              creationflags=NO_WINDOW)
     if proc.returncode != 0:
         raise RuntimeError(f"claude exit {proc.returncode}: {(proc.stderr or '')[:300]}")
     envelope = json.loads(proc.stdout)
@@ -214,9 +218,12 @@ class Handler(BaseHTTPRequestHandler):
         route = self.path.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
         if route not in ("suggest", "print"):
             return self.reply(404, {"error": "not found"})
-        if not hmac.compare_digest(self.headers.get("x-key", ""), KEY):
+        if not hmac.compare_digest(self.headers.get("x-key", "").encode(), KEY.encode()):
             return self.reply(401, {"error": "This link is missing its key."})
-        n = int(self.headers.get("Content-Length") or 0)
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return self.reply(400, {"error": "Bad request."})
         if n <= 0 or n > MAX_BODY:
             return self.reply(413, {"error": "That image is too big."})
         if route == "print":
