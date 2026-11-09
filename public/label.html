@@ -31,6 +31,12 @@
   button:disabled { opacity:.5; cursor:default; }
   .msg { font-size:14px; color:var(--muted); margin:10px 0 0; min-height:1.4em; }
   .msg.err { color:var(--err); }
+  .photo-row { margin-top:8px; }
+  .photo-row button.alt { font-size:15px; padding:8px 14px; min-height:40px; }
+  .suggest { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .suggest:empty { display:none; }
+  .suggest .chip small { color:var(--muted); margin-left:4px; }
+  .suggest .chip[aria-pressed=true] small { color:#fff; }
   .previews { display:grid; gap:10px; }
   .previews img { width:100%; max-width:450px; border:1px solid var(--line); border-radius:6px; background:#fff; }
   .hint { font-size:14px; color:var(--muted); }
@@ -78,6 +84,11 @@
     <form id="form">
       <label for="name" id="name-label">What's in it</label>
       <input id="name" autocomplete="off" placeholder="e.g. Chicken soup" maxlength="120" required>
+      <div class="photo-row" id="photo-row">
+        <button class="alt" type="button" id="photo-btn">📷 From a photo</button>
+        <input type="file" id="photo-file" accept="image/*" capture="environment" hidden>
+      </div>
+      <div class="suggest" id="suggest" role="group" aria-label="Suggested labels"></div>
       <div class="two" id="food-only">
         <div id="date-box"><label for="date">Date</label><input id="date" type="date" required></div>
         <div><label for="copies">How many</label><input id="copies" type="number" min="1" max="50" value="1" inputmode="numeric"></div>
@@ -148,6 +159,8 @@
     document.querySelectorAll("[data-kind]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.kind === k)));
     $("food-only").hidden = k !== "food" && k !== "bin";
     $("date-box").hidden = k === "bin";
+    $("photo-row").hidden = k !== "food";
+    if (k !== "food") $("suggest").replaceChildren();
     $("date").required = k === "food";
     $("name-label").textContent = { food: "What's in it", loc: "Which freezer", cmd: "Label text", bin: "Bin name" }[k];
     $("name").placeholder = { food: "e.g. Chicken soup", loc: "e.g. Garage freezer", cmd: "", bin: "e.g. Christmas" }[k];
@@ -211,6 +224,51 @@
     if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
     return j;
   }
+  // Photo -> suggested labels. Tap one to fill the form; today's date unless one is written on the pack.
+  async function shrink(file, maxSide, quality){
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => bad(new Error("That file isn't a photo this browser can read.")); i.src = url; });
+      const k = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement("canvas"); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      return c.toDataURL("image/jpeg", quality);
+    } finally { URL.revokeObjectURL(url); }
+  }
+  function useSuggestion(s, chip){
+    $("name").value = s.name;
+    $("copies").value = String(s.count);
+    $("date").value = s.date || today();
+    $("suggest").querySelectorAll(".chip").forEach(c => c.setAttribute("aria-pressed", String(c === chip)));
+    msg((s.date ? "Filled in, with the date written on the pack." : "Filled in with today's date.") + " Check it, then tap " + $("make").textContent + ".");
+    $("make").focus();
+  }
+  $("photo-btn").addEventListener("click", () => $("photo-file").click());
+  $("photo-file").addEventListener("change", async () => {
+    const file = $("photo-file").files[0]; $("photo-file").value = "";
+    if (!file) return;
+    if (!key) return msg("Open this page from your scanning link first.", true);
+    $("photo-btn").disabled = true; $("suggest").replaceChildren();
+    msg("Looking at the photo…");
+    try {
+      let image = await shrink(file, 1600, 0.8);
+      if (image.length > 1.9e6) image = await shrink(file, 1280, 0.6);
+      const { items } = await api("POST", "suggest", { image });
+      if (!items.length) return msg("Didn't spot any food in that photo. Type it in instead.", true);
+      for (const s of items) {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "chip"; b.setAttribute("aria-pressed", "false");
+        b.textContent = s.name + (s.count > 1 ? " ×" + s.count : "");
+        if (s.date) { const d = document.createElement("small"); d.textContent = prettyDate(s.date); b.append(d); }
+        b.addEventListener("click", () => useSuggestion(s, b));
+        $("suggest").append(b);
+      }
+      if (items.length === 1) useSuggestion(items[0], $("suggest").firstChild);
+      else msg("Tap one to fill in its label.");
+    } catch (e) { msg(e.message, true); }
+    finally { $("photo-btn").disabled = false; }
+  });
+
   // Pages a paper sheet takes: small labels pair up two to a row, a bin label has a row
   // to itself; rows of 1.16 in (bin 2.39 in) with 0.3 in between, 10.2 in to a page.
   function pagesFor(list){

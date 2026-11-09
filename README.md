@@ -48,6 +48,17 @@ never sent in a page request; the page sends it to the API in a header. It does
 stay in the address bar so a home-screen icon keeps it, so share only the
 family-list link.
 
+## Labels from a photo (optional)
+
+On **Make labels**, **📷 From a photo** sends one photo of unlabelled food to
+Claude and offers a label for each food it sees (name, how many packs, and the
+date if one is written on the pack; otherwise today). Tap one to fill in the
+form. To turn it on, add an `ANTHROPIC_API_KEY` environment variable (Netlify:
+Site configuration → Environment variables; self-hosted: `.env`). Each photo is
+one API call, about a cent. Without the key the button explains it isn't set up.
+The model call lives in `netlify/lib/label-ai.mjs`, so it can be pointed at a
+local vision model later (`LABEL_AI`, `LABEL_AI_MODEL`).
+
 Optional settings:
 
 - `TZ_NAME` is the time zone used to date label IDs, e.g. `America/New_York`. Default: `UTC`.
