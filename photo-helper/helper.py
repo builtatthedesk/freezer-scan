@@ -18,6 +18,9 @@ Settings (environment):
     ALLOWED_ORIGINS     comma list; default https://freezer-scan.netlify.app
     LABEL_PRINT_DIR     label-print checkout; default ../../label-print
     LABEL_PRINTER       its printer profile; default "Garage QL-820NWB" (empty = no printing)
+    KEEP_AWAKE_SECS     poke the printer this often; default 60 (0 = off). The QL-820NWB's
+                        network ports drop into standby after ~3 idle minutes and then
+                        barely answer, so a poke inside that window keeps it reachable.
 """
 from __future__ import annotations
 
@@ -27,10 +30,12 @@ import hmac
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -47,6 +52,50 @@ LP_DIR = Path(os.environ.get("LABEL_PRINT_DIR", HERE.parent.parent / "label-prin
 LP_PYTHON = LP_DIR / ".venv" / "Scripts" / "python.exe"
 PRINTER = os.environ.get("LABEL_PRINTER", "Garage QL-820NWB") if (LP_DIR / "labelprint.py").exists() else ""
 PRINT_LOCK = threading.Lock()   # one job at a time, in order
+KEEP_AWAKE_SECS = int(os.environ.get("KEEP_AWAKE_SECS", "60"))
+
+
+def printer_addr():
+    """(host, port) of LABEL_PRINTER's net:// transport in label-print's config, or None."""
+    try:
+        cfg = json.loads((LP_DIR / "config.json").read_text(encoding="utf-8-sig"))
+        t = (cfg.get("printers") or {}).get(PRINTER, {}).get("transport", "")
+    except (OSError, ValueError):
+        return None
+    m = re.fullmatch(r"net://([^:/]+)(?::(\d+))?", t)
+    return (m.group(1), int(m.group(2) or 9100)) if m else None
+
+
+def poke(addr, timeout=3.0) -> bool:
+    """Open and close a connection to the print port: wakes it, sends nothing."""
+    try:
+        socket.create_connection(addr, timeout=timeout).close()
+        return True
+    except OSError:
+        return False
+
+
+def wake(addr, within=20.0) -> bool:
+    end = time.monotonic() + within
+    while True:
+        if poke(addr):
+            return True
+        if time.monotonic() >= end:
+            return False
+        time.sleep(2)
+
+
+def keep_awake():
+    addr, was = printer_addr(), None
+    if not addr or KEEP_AWAKE_SECS <= 0:
+        return
+    while True:
+        if not PRINT_LOCK.locked():
+            up = poke(addr)
+            if up != was:   # log changes only
+                log(f"printer {addr[0]} {'answering' if up else 'not answering (off or asleep)'}")
+                was = up
+        time.sleep(KEEP_AWAKE_SECS)
 
 
 def write_key() -> str:
@@ -82,6 +131,9 @@ def origin_ok(origin: str) -> bool:
 
 
 def print_label(png: bytes) -> None:
+    addr = printer_addr()
+    if addr and not wake(addr):
+        raise RuntimeError(f"{addr[0]} not answering after 20 s")
     with tempfile.TemporaryDirectory(prefix="freezer-label-") as tmp:
         path = Path(tmp) / "label.png"
         path.write_bytes(png)
@@ -223,5 +275,7 @@ def log(msg: str):
 
 
 if __name__ == "__main__":
-    log(f"listening on 127.0.0.1:{PORT}, model {MODEL}")
+    log(f"listening on 127.0.0.1:{PORT}, model {MODEL}, printer {PRINTER or 'none'}")
+    if PRINTER:
+        threading.Thread(target=keep_awake, daemon=True).start()
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
