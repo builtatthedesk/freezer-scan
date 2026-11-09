@@ -254,6 +254,7 @@
       let image = await shrink(file, 1600, 0.8);
       if (image.length > 1.9e6) image = await shrink(file, 1280, 0.6);
       const { items } = await api("POST", "suggest", { image });
+      if (kind !== "food") return msg("");      // switched to another label type while it was looking
       if (!items.length) return msg("Didn't spot any food in that photo. Type it in instead.", true);
       for (const s of items) {
         const b = document.createElement("button");
