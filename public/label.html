@@ -103,6 +103,7 @@
     <div class="btns">
       <button class="main" type="button" id="print">Print</button>
       <button class="alt" type="button" id="save">Save images</button>
+      <button class="main" type="button" id="remote-print" hidden>🖨️ Print on label printer</button>
       <button class="alt" type="button" id="clear" hidden>Start a new sheet</button>
     </div>
     <ul class="hint" id="hint-roll">
@@ -237,8 +238,12 @@
   }
   // A photo helper on your own computer (SUGGEST_URL) if the site has one, else this site's API.
   let suggestUrl;
-  async function suggest(image){
+  async function helperUrl(){
     if (suggestUrl === undefined) suggestUrl = (await api("GET", "config")).suggestUrl || null;
+    return suggestUrl;
+  }
+  async function suggest(image){
+    await helperUrl();
     if (!suggestUrl) return api("POST", "suggest", { image });
     let r;
     try {
@@ -368,7 +373,48 @@
       const b = new Image(); b.src = l.url; b.alt = ""; b.classList.toggle("big", !!l.big); sh.append(b);
     }
     $("out").hidden = !made.length;
+    showRemotePrint();
   }
+
+  // The same helper can print: the label goes to that computer, which prints it on its
+  // label printer (label-print). No printer app needed on the phone.
+  let helperPrinter;   // undefined = not asked yet, null = none
+  async function showRemotePrint(){
+    const btn = $("remote-print");
+    btn.hidden = true;
+    if (!made.length || media === "paper" || !key) return;
+    if (helperPrinter === undefined) {
+      helperPrinter = null;
+      try {
+        const url = await helperUrl();
+        if (url) {
+          const r = await fetch(url.replace(/\/$/, "") + "/health", { signal: AbortSignal.timeout(6000) });
+          helperPrinter = (await r.json()).printer || null;
+        }
+      } catch {}
+    }
+    if (!helperPrinter) return;
+    btn.textContent = "🖨️ Print on " + helperPrinter.replace(/ ?QL-\S+$/, "") + " printer";
+    btn.hidden = !made.length || media === "paper";
+  }
+  $("remote-print").addEventListener("click", async () => {
+    const btn = $("remote-print"), list = made.slice();
+    if (!list.length) return;
+    btn.disabled = true;
+    try {
+      for (let i = 0; i < list.length; i++) {
+        msg(list.length > 1 ? `Printing ${i + 1} of ${list.length}…` : "Printing…");
+        let r;
+        try {
+          r = await fetch(suggestUrl.replace(/\/$/, "") + "/print", { method: "POST", headers: { "x-key": key, "content-type": "application/json" }, body: JSON.stringify({ image: list[i].url }) });
+        } catch { throw new Error("Can't reach the computer that prints. Is Tailscale on, and is it awake?"); }
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || "Printer said HTTP " + r.status);
+      }
+      msg(list.length > 1 ? `Printed ${list.length} labels on ${helperPrinter}.` : `Printed on ${helperPrinter}.`);
+    } catch (e) { msg(e.message, true); }
+    finally { btn.disabled = false; }
+  });
   $("clear").addEventListener("click", () => { made = []; printed = 0; renderMade(); msg("New sheet started."); });
   setMedia(media);
 

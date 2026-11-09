@@ -6,7 +6,9 @@ page sends, and answers with the foods it sees. Meant to sit behind
 
     POST /suggest   header x-key: <WRITE_KEY>   body {"image": "data:image/jpeg;base64,..."}
                     -> {"items": [{"name", "count", "date"}]}
-    GET  /health    -> {"ok": true}
+    POST /print     header x-key   body {"image": "data:image/png;base64,..."}  (one finished label)
+                    -> {"ok": true, "printer": ...}  printed with label-print on LABEL_PRINTER
+    GET  /health    -> {"ok": true, "printer": <name or null>}
 
 Settings (environment):
     FREEZER_WRITE_KEY   scanning key; default: WRITE_KEY from ../.keys.env
@@ -14,6 +16,8 @@ Settings (environment):
     HELPER_MODEL        default "sonnet"
     CLAUDE_BIN          default ~/.local/bin/claude.exe
     ALLOWED_ORIGINS     comma list; default https://freezer-scan.netlify.app
+    LABEL_PRINT_DIR     label-print checkout; default ../../label-print
+    LABEL_PRINTER       its printer profile; default "Garage QL-820NWB" (empty = no printing)
 """
 from __future__ import annotations
 
@@ -39,6 +43,10 @@ ORIGINS = [o.strip() for o in os.environ.get(
 MAX_BODY = 3_000_000
 TIMEOUT = 150
 ONE_AT_A_TIME = threading.Lock()
+LP_DIR = Path(os.environ.get("LABEL_PRINT_DIR", HERE.parent.parent / "label-print"))
+LP_PYTHON = LP_DIR / ".venv" / "Scripts" / "python.exe"
+PRINTER = os.environ.get("LABEL_PRINTER", "Garage QL-820NWB") if (LP_DIR / "labelprint.py").exists() else ""
+PRINT_LOCK = threading.Lock()   # one job at a time, in order
 
 
 def write_key() -> str:
@@ -71,6 +79,18 @@ def origin_ok(origin: str) -> bool:
         return True
     return any(re.fullmatch(r"https://[\w-]+--" + re.escape(o.split("://", 1)[1]), origin or "")
                for o in ORIGINS if o.startswith("https://"))
+
+
+def print_label(png: bytes) -> None:
+    with tempfile.TemporaryDirectory(prefix="freezer-label-") as tmp:
+        path = Path(tmp) / "label.png"
+        path.write_bytes(png)
+        # 9100 on the QL-8xx never answers a status request, hence --no-verify.
+        cmd = [str(LP_PYTHON), "labelprint.py", "--printer", PRINTER, "--no-verify", "image", str(path)]
+        proc = subprocess.run(cmd, cwd=str(LP_DIR), capture_output=True, text=True,
+                              encoding="utf-8", timeout=60)
+    if proc.returncode != 0 or "sent " not in proc.stdout:
+        raise RuntimeError(f"labelprint exit {proc.returncode}: {(proc.stderr or proc.stdout)[-300:]}")
 
 
 def ask_claude(jpeg: bytes) -> list[dict]:
@@ -134,18 +154,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.rstrip("/").endswith("/health"):
-            return self.reply(200, {"ok": True})
+            return self.reply(200, {"ok": True, "printer": PRINTER or None})
         self.reply(404, {"error": "not found"})
 
     def do_POST(self):
         # tailscale serve may or may not strip its mount path, so match the tail.
-        if not self.path.split("?")[0].rstrip("/").endswith("/suggest"):
+        route = self.path.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+        if route not in ("suggest", "print"):
             return self.reply(404, {"error": "not found"})
         if not hmac.compare_digest(self.headers.get("x-key", ""), KEY):
             return self.reply(401, {"error": "This link is missing its key."})
         n = int(self.headers.get("Content-Length") or 0)
         if n <= 0 or n > MAX_BODY:
-            return self.reply(413, {"error": "That photo is too big."})
+            return self.reply(413, {"error": "That image is too big."})
+        if route == "print":
+            return self.do_print(n)
         try:
             body = json.loads(self.rfile.read(n))
             m = re.fullmatch(r"data:image/jpeg;base64,([A-Za-z0-9+/=]+)", body.get("image", ""))
@@ -165,6 +188,25 @@ class Handler(BaseHTTPRequestHandler):
             ONE_AT_A_TIME.release()
         log(f"suggest ok: {len(items)} item(s)")
         self.reply(200, {"items": items})
+
+    def do_print(self, n: int):
+        if not PRINTER:
+            return self.reply(501, {"error": "This computer has no label printer set up."})
+        try:
+            m = re.fullmatch(r"data:image/png;base64,([A-Za-z0-9+/=]+)", json.loads(self.rfile.read(n)).get("image", ""))
+            png = base64.b64decode(m.group(1)) if m else b""
+        except Exception:
+            png = b""
+        if png[:4] != b"\x89PNG":
+            return self.reply(400, {"error": "That label did not come through (PNG only)."})
+        with PRINT_LOCK:
+            try:
+                print_label(png)
+            except Exception as e:  # noqa: BLE001
+                log(f"print failed: {type(e).__name__}: {e}")
+                return self.reply(502, {"error": f"The {PRINTER} didn't take it. Is it on? Try again."})
+        log("print ok")
+        self.reply(200, {"ok": True, "printer": PRINTER})
 
     def log_message(self, fmt, *args):
         pass
