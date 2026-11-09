@@ -235,6 +235,19 @@
       return c.toDataURL("image/jpeg", quality);
     } finally { URL.revokeObjectURL(url); }
   }
+  // A photo helper on your own computer (SUGGEST_URL) if the site has one, else this site's API.
+  let suggestUrl;
+  async function suggest(image){
+    if (suggestUrl === undefined) suggestUrl = (await api("GET", "config")).suggestUrl || null;
+    if (!suggestUrl) return api("POST", "suggest", { image });
+    let r;
+    try {
+      r = await fetch(suggestUrl.replace(/\/$/, "") + "/suggest", { method: "POST", headers: { "x-key": key, "content-type": "application/json" }, body: JSON.stringify({ image }) });
+    } catch { throw new Error("Can't reach the photo helper. Is Tailscale on, and is the computer awake?"); }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "Photo helper said HTTP " + r.status);
+    return j;
+  }
   function useSuggestion(s, chip){
     $("name").value = s.name;
     $("copies").value = String(s.count);
@@ -249,11 +262,11 @@
     if (!file) return;
     if (!key) return msg("Open this page from your scanning link first.", true);
     $("photo-btn").disabled = true; $("suggest").replaceChildren();
-    msg("Looking at the photo…");
+    msg("Looking at the photo… this takes about half a minute.");
     try {
       let image = await shrink(file, 1600, 0.8);
       if (image.length > 1.9e6) image = await shrink(file, 1280, 0.6);
-      const { items } = await api("POST", "suggest", { image });
+      const { items } = await suggest(image);
       if (kind !== "food") return msg("");      // switched to another label type while it was looking
       if (!items.length) return msg("Didn't spot any food in that photo. Type it in instead.", true);
       for (const s of items) {

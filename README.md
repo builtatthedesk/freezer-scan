@@ -59,6 +59,13 @@ one API call, about a cent. Without the key the button explains it isn't set up.
 The model call lives in `netlify/lib/label-ai.mjs`, so it can be pointed at a
 local vision model later (`LABEL_AI`, `LABEL_AI_MODEL`).
 
+**No API key?** `photo-helper/` runs the same job on your own computer with
+Claude Code (`claude -p`, your Claude subscription). Run
+`photo-helper/install-autostart.ps1` once (starts it at log on and puts it on your
+Tailscale HTTPS name), then set the site's `SUGGEST_URL` to the address it prints.
+The page then sends photos straight to that computer: the phone needs Tailscale on
+and the computer must be awake. It takes about half a minute per photo.
+
 Optional settings:
 
 - `TZ_NAME` is the time zone used to date label IDs, e.g. `America/New_York`. Default: `UTC`.

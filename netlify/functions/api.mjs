@@ -6,6 +6,7 @@
 //   POST   /api/ids            write key, body { n } -> { ids } fresh label IDs
 //   POST   /api/log            write key, body = scan-log entry (append-only)
 //   GET    /api/share          write key -> { readKey } for the family-list link
+//   GET    /api/config         write key -> { suggestUrl } photo helper to use instead of /api/suggest
 //   POST   /api/suggest        write key, body { image } JPEG data URL -> { items: [{ name, count, date }] },
 //                               suggested labels for the food in a photo (netlify/lib/label-ai.mjs)
 // Storage bins (attic boxes): one JSON blob { id: bin }, photos as separate blobs.
@@ -235,6 +236,11 @@ export default async (req) => {
     }
   }
 
+  if (req.method === "GET" && path[0] === "config" && !path[1]) {
+    // SUGGEST_URL: a photo helper the page calls directly (photo-helper/, e.g. behind
+    // tailscale serve), used instead of /api/suggest when set.
+    return json(200, { suggestUrl: demo ? null : (process.env.SUGGEST_URL || null) });
+  }
   if (req.method === "POST" && path[0] === "suggest" && !path[1]) {
     if (!canWrite) return json(403, { error: "This link can only view the list." });
     if (demo) return json(403, { error: "Photo suggestions are turned off in the demo. On your own copy, set ANTHROPIC_API_KEY to turn them on." });
