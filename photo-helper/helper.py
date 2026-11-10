@@ -63,6 +63,14 @@ LP_PYTHON = LP_DIR / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bi
 PUBLIC_DIR = Path(os.environ["PUBLIC_DIR"]).resolve() if os.environ.get("PUBLIC_DIR") else None
 UPSTREAM = os.environ.get("UPSTREAM", "https://freezer-scan.netlify.app").rstrip("/")
 MAX_PROXY_BODY = 12_000_000
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):   # never carry the key to another address
+        return None
+
+
+NO_REDIRECT = urllib.request.build_opener(_NoRedirect)
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
          ".css": "text/css; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml",
          ".ico": "image/x-icon", ".webmanifest": "application/manifest+json",
@@ -273,11 +281,11 @@ class Handler(BaseHTTPRequestHandler):
         headers = {h: self.headers[h] for h in ("x-key", "content-type", "accept") if self.headers.get(h)}
         req = urllib.request.Request(UPSTREAM + self.path, data=body, method=self.command, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=60) as r:
+            with NO_REDIRECT.open(req, timeout=60) as r:
                 status, rh, raw = r.status, r.headers, r.read()
-        except urllib.error.HTTPError as e:
+        except urllib.error.HTTPError as e:   # includes 3xx, passed back as-is
             status, rh, raw = e.code, e.headers, e.read()
-        except OSError as e:
+        except Exception as e:  # noqa: BLE001 - bad path, upstream gone, truncated body
             log(f"proxy failed: {self.command} {self.path.split('?')[0]}: {e}")
             return self.reply(502, {"error": "Can't reach the freezer list right now. Try again."})
         self.send_response(status)
