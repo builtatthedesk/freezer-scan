@@ -7,8 +7,9 @@ page sends, and answers with the foods it sees. Meant to sit behind
     POST /suggest   header x-key: <WRITE_KEY>   body {"image": "data:image/jpeg;base64,..."}
                     -> {"items": [{"name", "count", "date"}]}
     POST /print     header x-key   body {"image": "data:image/png;base64,..."}  (one finished label)
-                    -> {"ok": true, "printer": ...}  printed with label-print on LABEL_PRINTER
-    GET  /health    -> {"ok": true, "printer": <name or null>}
+                    optional "printer": one of LABEL_PRINTER (default: the first)
+                    -> {"ok": true, "printer": ...}  printed with label-print
+    GET  /health    -> {"ok": true, "printer": <first or null>, "printers": [...]}
 
 Settings (environment):
     FREEZER_WRITE_KEY   scanning key; default: WRITE_KEY from ../.keys.env
@@ -17,7 +18,7 @@ Settings (environment):
     CLAUDE_BIN          default ~/.local/bin/claude.exe
     ALLOWED_ORIGINS     comma list; default https://freezer-scan.netlify.app
     LABEL_PRINT_DIR     label-print checkout; default ../../label-print
-    LABEL_PRINTER       its printer profile; default "Garage QL-820NWB" (empty = no printing)
+    LABEL_PRINTER       its printer profile(s), comma list; default "Garage QL-820NWB" (empty = none)
     PUBLIC_DIR          also serve the site from this folder (its public/), with /api/... passed
                         through to UPSTREAM and /api/config pointing at this helper. Lets the
                         pages run from an always-on box with no Netlify deploy (see README).
@@ -75,18 +76,20 @@ TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=u
          ".css": "text/css; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml",
          ".ico": "image/x-icon", ".webmanifest": "application/manifest+json",
          ".json": "application/json", ".jpg": "image/jpeg", ".txt": "text/plain; charset=utf-8"}
-PRINTER = os.environ.get("LABEL_PRINTER", "Garage QL-820NWB") if (LP_DIR / "labelprint.py").exists() else ""
+PRINTERS = [p.strip() for p in os.environ.get("LABEL_PRINTER", "Garage QL-820NWB").split(",")
+            if p.strip()] if (LP_DIR / "labelprint.py").exists() else []
+PRINTER = PRINTERS[0] if PRINTERS else ""   # the default
 PRINT_LOCK = threading.Lock()   # one job at a time, in order
 KEEP_AWAKE_SECS = int(os.environ.get("KEEP_AWAKE_SECS", "60"))
 # Under pythonw (autostart) every child would otherwise flash a console window.
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
-def printer_addr():
-    """(host, port) of LABEL_PRINTER's net:// transport in label-print's config, or None."""
+def printer_addr(printer: str = ""):
+    """(host, port) of a printer profile's net:// transport in label-print's config, or None."""
     try:
         cfg = json.loads((LP_DIR / "config.json").read_text(encoding="utf-8-sig"))
-        t = (cfg.get("printers") or {}).get(PRINTER, {}).get("transport", "")
+        t = (cfg.get("printers") or {}).get(printer or PRINTER, {}).get("transport", "")
     except (OSError, ValueError):
         return None
     m = re.fullmatch(r"net://([^:/]+)(?::(\d+))?", t)
@@ -112,8 +115,8 @@ def wake(addr, within=20.0) -> bool:
         time.sleep(2)
 
 
-def keep_awake():
-    addr, was = printer_addr(), None
+def keep_awake(printer: str):
+    addr, was = printer_addr(printer), None
     if not addr or KEEP_AWAKE_SECS <= 0:
         return
     while True:
@@ -157,15 +160,15 @@ def origin_ok(origin: str) -> bool:
                for o in ORIGINS if o.startswith("https://"))
 
 
-def print_label(png: bytes) -> None:
-    addr = printer_addr()
+def print_label(png: bytes, printer: str) -> None:
+    addr = printer_addr(printer)
     if addr and not wake(addr):
         raise RuntimeError(f"{addr[0]} not answering after 20 s")
     with tempfile.TemporaryDirectory(prefix="freezer-label-") as tmp:
         path = Path(tmp) / "label.png"
         path.write_bytes(png)
         # 9100 on the QL-8xx never answers a status request, hence --no-verify.
-        cmd = [str(LP_PYTHON), "labelprint.py", "--printer", PRINTER, "--no-verify", "image", str(path)]
+        cmd = [str(LP_PYTHON), "labelprint.py", "--printer", printer, "--no-verify", "image", str(path)]
         proc = subprocess.run(cmd, cwd=str(LP_DIR), capture_output=True, text=True,
                               encoding="utf-8", timeout=60, stdin=subprocess.DEVNULL,
                               creationflags=NO_WINDOW)
@@ -236,7 +239,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
         if path.rstrip("/").endswith("/health"):
-            return self.reply(200, {"ok": True, "printer": PRINTER or None})
+            return self.reply(200, {"ok": True, "printer": PRINTER or None, "printers": PRINTERS})
         if PUBLIC_DIR and path == "/api/config" and self.key_ok():
             host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host", "")
             return self.reply(200, {"suggestUrl": f"https://{host}" if host else None})
@@ -337,20 +340,24 @@ class Handler(BaseHTTPRequestHandler):
         if not PRINTER:
             return self.reply(501, {"error": "This computer has no label printer set up."})
         try:
-            m = re.fullmatch(r"data:image/png;base64,([A-Za-z0-9+/=]+)", json.loads(self.rfile.read(n)).get("image", ""))
+            body = json.loads(self.rfile.read(n))
+            m = re.fullmatch(r"data:image/png;base64,([A-Za-z0-9+/=]+)", body.get("image", ""))
             png = base64.b64decode(m.group(1)) if m else b""
+            printer = body.get("printer") or PRINTER
         except Exception:
-            png = b""
+            png, printer = b"", PRINTER
         if png[:4] != b"\x89PNG":
             return self.reply(400, {"error": "That label did not come through (PNG only)."})
+        if printer not in PRINTERS:
+            return self.reply(400, {"error": "This computer doesn't know that printer."})
         with PRINT_LOCK:
             try:
-                print_label(png)
+                print_label(png, printer)
             except Exception as e:  # noqa: BLE001
-                log(f"print failed: {type(e).__name__}: {e}")
-                return self.reply(502, {"error": f"The {PRINTER} didn't take it. Is it on? Try again."})
-        log("print ok")
-        self.reply(200, {"ok": True, "printer": PRINTER})
+                log(f"print failed on {printer}: {type(e).__name__}: {e}")
+                return self.reply(502, {"error": f"The {printer} didn't take it. Is it on? Try again."})
+        log(f"print ok on {printer}")
+        self.reply(200, {"ok": True, "printer": printer})
 
     def log_message(self, fmt, *args):
         if os.environ.get("HELPER_DEBUG"):
@@ -368,7 +375,7 @@ def log(msg: str):
 
 
 if __name__ == "__main__":
-    log(f"listening on 127.0.0.1:{PORT}, model {MODEL}, printer {PRINTER or 'none'}")
-    if PRINTER:
-        threading.Thread(target=keep_awake, daemon=True).start()
+    log(f"listening on 127.0.0.1:{PORT}, model {MODEL}, printers {', '.join(PRINTERS) or 'none'}")
+    for p in PRINTERS:
+        threading.Thread(target=keep_awake, args=(p,), daemon=True).start()
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

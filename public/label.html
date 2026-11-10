@@ -28,6 +28,7 @@
   button.main, button.alt { font-size:17px; padding:12px 18px; border-radius:10px; min-height:46px; cursor:pointer; border:1px solid var(--accent); }
   button.main { background:var(--accent); color:#fff; font-weight:600; }
   button.alt { background:transparent; color:var(--accent); }
+  #remote-print:not([hidden]) { display:contents; }
   button:disabled { opacity:.5; cursor:default; }
   .msg { font-size:14px; color:var(--muted); margin:10px 0 0; min-height:1.4em; }
   .msg.err { color:var(--err); }
@@ -103,7 +104,7 @@
     <div class="btns">
       <button class="main" type="button" id="print">Print</button>
       <button class="alt" type="button" id="save">Save images</button>
-      <button class="main" type="button" id="remote-print" hidden>🖨️ Print on label printer</button>
+      <span id="remote-print" hidden></span>
       <button class="alt" type="button" id="clear" hidden>Start a new sheet</button>
     </div>
     <ul class="hint" id="hint-roll">
@@ -378,50 +379,63 @@
 
   // The same helper can print: the label goes to that computer, which prints it on its
   // label printer (label-print). No printer app needed on the phone.
-  let helperPrinter;   // printer name once the helper has answered; asked again until then
+  // One button per printer the helper has (e.g. Garage and Office).
+  let helperPrinters;   // printer names once the helper has answered; asked again until then
+  const shortName = p => p.replace(/ ?QL-\S+$/, "");
   async function showRemotePrint(){
-    const btn = $("remote-print");
-    btn.hidden = true;
+    const box = $("remote-print");
+    box.hidden = true;
     if (!made.length || media === "paper" || !key) return;
-    if (!helperPrinter) {
+    if (!helperPrinters || !helperPrinters.length) {
       try {
         const url = await helperUrl();
         if (url) {
           const r = await fetch(url.replace(/\/$/, "") + "/health", { signal: AbortSignal.timeout(6000) });
-          helperPrinter = (await r.json()).printer || null;
+          const h = await r.json();
+          helperPrinters = h.printers || (h.printer ? [h.printer] : []);
         }
       } catch {}
     }
-    if (!helperPrinter) return;
-    btn.textContent = "🖨️ Print on " + helperPrinter.replace(/ ?QL-\S+$/, "") + " printer";
-    btn.hidden = !made.length || media === "paper";
+    if (!helperPrinters || !helperPrinters.length) return;
+    if (box.dataset.for !== helperPrinters.join("|")) {
+      box.dataset.for = helperPrinters.join("|");
+      box.replaceChildren(...helperPrinters.map(p => {
+        const b = document.createElement("button");
+        b.className = "main"; b.type = "button";
+        b.textContent = "🖨️ Print on " + shortName(p) + " printer";
+        b.addEventListener("click", () => remotePrint(p, b));
+        return b;
+      }));
+    }
+    box.hidden = !made.length || media === "paper";
   }
-  // Labels already printed from the current sheet, so a retry after a failure resumes
-  // instead of printing the first ones again.
-  let remoteDone = new Set();
-  $("remote-print").addEventListener("click", async () => {
-    const btn = $("remote-print"), list = made.slice();
+  // Labels already printed from the current sheet, per printer, so a retry after a failure
+  // resumes instead of printing the first ones again.
+  const remoteDone = {};
+  async function remotePrint(printer, btn){
+    const list = made.slice();
     if (!list.length) return;
-    const todo = list.filter(l => !remoteDone.has(l));
-    if (!todo.length) remoteDone = new Set();   // all printed already: tapping again = print the set again
-    const queue = todo.length ? todo : list, n = list.length;
+    let done = remoteDone[printer] || (remoteDone[printer] = new Set());
+    const todo = list.filter(l => !done.has(l));
+    if (!todo.length) done = remoteDone[printer] = new Set();   // all printed already: tap again = print the set again
+    const queue = todo.length ? todo : list, n = list.length, where = shortName(printer) + " printer";
     btn.disabled = true;
     try {
       for (const l of queue) {
         const at = list.indexOf(l) + 1;
-        msg(n > 1 ? `Printing ${at} of ${n}…` : "Printing…");
+        msg(n > 1 ? `Printing ${at} of ${n} on ${where}…` : `Printing on ${where}…`);
         let r;
         try {
-          r = await fetch(suggestUrl.replace(/\/$/, "") + "/print", { method: "POST", headers: { "x-key": key, "content-type": "application/json" }, body: JSON.stringify({ image: l.url }) });
-        } catch { throw new Error(`Can't reach the computer that prints (label ${at} may or may not have printed). Is Tailscale on, and is it awake? Tap again to carry on from label ${at}.`); }
+          r = await fetch(suggestUrl.replace(/\/$/, "") + "/print", { method: "POST", headers: { "x-key": key, "content-type": "application/json" }, body: JSON.stringify({ image: l.url, printer }) });
+        } catch { throw new Error(`Can't reach the computer that prints (label ${at} may or may not have printed). Is Tailscale on? Tap again to carry on from label ${at}.`); }
         const j = await r.json().catch(() => null);
-        if (!r.ok) throw new Error(j && j.error ? `${j.error} Tap again to carry on from label ${at}.` : "Can't reach the computer that prints. Is it awake?");
-        remoteDone.add(l);
+        if (!r.ok) throw new Error(j && j.error ? `${j.error} Tap again to carry on from label ${at}.` : "Can't reach the computer that prints.");
+        done.add(l);
       }
-      msg(n > 1 ? `Printed ${n} labels on ${helperPrinter}.` : `Printed on ${helperPrinter}.`);
+      msg(n > 1 ? `Printed ${n} labels on the ${where}.` : `Printed on the ${where}.`);
     } catch (e) { msg(e.message, true); }
     finally { btn.disabled = false; }
-  });
+  }
   $("clear").addEventListener("click", () => { made = []; printed = 0; renderMade(); msg("New sheet started."); });
   setMedia(media);
 
