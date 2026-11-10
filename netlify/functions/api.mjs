@@ -6,6 +6,9 @@
 //   POST   /api/ids            write key, body { n } -> { ids } fresh label IDs
 //   POST   /api/log            write key, body = scan-log entry (append-only)
 //   GET    /api/share          write key -> { readKey } for the family-list link
+//   GET    /api/config         write key -> { suggestUrl } photo helper to use instead of /api/suggest
+//   POST   /api/suggest        write key, body { image } JPEG data URL -> { items: [{ name, count, date }] },
+//                               suggested labels for the food in a photo (netlify/lib/label-ai.mjs)
 // Storage bins (attic boxes): one JSON blob { id: bin }, photos as separate blobs.
 //   GET    /api/bins                     read key -> { bins, canWrite }
 //   PUT    /api/bins/:id                 write key, body { name, notes } (creates or renames)
@@ -17,6 +20,7 @@
 // With DEMO=1 the key "demo" opens a separate sample list anyone may scan into;
 // it is reset to the sample food whenever it is more than a day old.
 import { getStore } from "@netlify/blobs";
+import { suggestLabels, labelAiReady } from "../lib/label-ai.mjs";
 
 const json = (status, body) => new Response(JSON.stringify(body), {
   status, headers: { "content-type": "application/json", "cache-control": "no-store" },
@@ -232,6 +236,25 @@ export default async (req) => {
     }
   }
 
+  if (req.method === "GET" && path[0] === "config" && !path[1]) {
+    // SUGGEST_URL: a photo helper the page calls directly (photo-helper/, e.g. behind
+    // tailscale serve), used instead of /api/suggest when set.
+    return json(200, { suggestUrl: demo ? null : (process.env.SUGGEST_URL || null) });
+  }
+  if (req.method === "POST" && path[0] === "suggest" && !path[1]) {
+    if (!canWrite) return json(403, { error: "This link can only view the list." });
+    if (demo) return json(403, { error: "Photo suggestions are turned off in the demo. On your own copy, set ANTHROPIC_API_KEY to turn them on." });
+    if (!labelAiReady()) return json(501, { error: "Photo suggestions aren't set up on this copy (ANTHROPIC_API_KEY is missing)." });
+    const b = await readJson(req);
+    const img = jpegFrom(b && b.image, MAX_PHOTO_BYTES);
+    if (!img) return json(400, { error: "That photo did not come through (JPEG, 1.5 MB at most)." });
+    try {
+      return json(200, { items: await suggestLabels(img.toString("base64")) });
+    } catch (e) {
+      console.error("suggest failed", e);
+      return json(502, { error: "Couldn't read the photo just now. Try again, or type it in." });
+    }
+  }
   if (req.method === "POST" && path[0] === "ids") {
     const n = Math.max(1, Math.min(50, Number(((await readJson(req)) || {}).n) || 1));
     const today = new Date().toLocaleDateString("en-CA", { timeZone: process.env.TZ_NAME || "UTC" });

@@ -48,6 +48,31 @@ never sent in a page request; the page sends it to the API in a header. It does
 stay in the address bar so a home-screen icon keeps it, so share only the
 family-list link.
 
+## Labels from a photo (optional)
+
+On **Make labels**, **📷 From a photo** sends one photo of unlabelled food to
+Claude and offers a label for each food it sees (name, how many packs, and the
+date if one is written on the pack; otherwise today). Tap one to fill in the
+form. To turn it on, add an `ANTHROPIC_API_KEY` environment variable (Netlify:
+Site configuration → Environment variables; self-hosted: `.env`). Each photo is
+one API call, about a cent. Without the key the button explains it isn't set up.
+The model call lives in `netlify/lib/label-ai.mjs`, so it can be pointed at a
+local vision model later (`LABEL_AI`, `LABEL_AI_MODEL`).
+
+**No API key?** `photo-helper/` runs the same job on your own computer with
+Claude Code (`claude -p`, your Claude subscription). Run
+`photo-helper/install-autostart.ps1` once (starts it at log on and puts it on your
+Tailscale HTTPS name), then set the site's `SUGGEST_URL` to the address it prints.
+The page then sends photos straight to that computer: the phone needs Tailscale on
+and the computer must be awake. It takes about half a minute per photo.
+
+The helper can also print each finished label on a network label printer
+(`LABEL_PRINTER`, a [label-print](https://github.com/builtatthedesk/ql-label-print)
+profile), and with `PUBLIC_DIR` set it serves the pages too, passing `/api/...` on to
+the Netlify site, so an always-on Linux box can run the label page (photo, print) with
+no Netlify deploy. A systemd unit plus `tailscale serve --https=8443` is enough; on
+Linux, log Claude Code in once as the service user for photo suggestions.
+
 Optional settings:
 
 - `TZ_NAME` is the time zone used to date label IDs, e.g. `America/New_York`. Default: `UTC`.
