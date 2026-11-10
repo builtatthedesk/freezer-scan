@@ -343,7 +343,7 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n))
             m = re.fullmatch(r"data:image/png;base64,([A-Za-z0-9+/=]+)", body.get("image", ""))
             png = base64.b64decode(m.group(1)) if m else b""
-            printer = body.get("printer") or PRINTER
+            printer = body.get("printer", PRINTER)
         except Exception:
             png, printer = b"", PRINTER
         if png[:4] != b"\x89PNG":
