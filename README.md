@@ -66,6 +66,13 @@ Tailscale HTTPS name), then set the site's `SUGGEST_URL` to the address it print
 The page then sends photos straight to that computer: the phone needs Tailscale on
 and the computer must be awake. It takes about half a minute per photo.
 
+The helper can also print each finished label on a network label printer
+(`LABEL_PRINTER`, a [label-print](https://github.com/builtatthedesk/ql-label-print)
+profile), and with `PUBLIC_DIR` set it serves the pages too, passing `/api/...` on to
+the Netlify site, so an always-on Linux box can run the label page (photo, print) with
+no Netlify deploy. A systemd unit plus `tailscale serve --https=8443` is enough; on
+Linux, log Claude Code in once as the service user for photo suggestions.
+
 Optional settings:
 
 - `TZ_NAME` is the time zone used to date label IDs, e.g. `America/New_York`. Default: `UTC`.

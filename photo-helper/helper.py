@@ -18,6 +18,10 @@ Settings (environment):
     ALLOWED_ORIGINS     comma list; default https://freezer-scan.netlify.app
     LABEL_PRINT_DIR     label-print checkout; default ../../label-print
     LABEL_PRINTER       its printer profile; default "Garage QL-820NWB" (empty = no printing)
+    PUBLIC_DIR          also serve the site from this folder (its public/), with /api/... passed
+                        through to UPSTREAM and /api/config pointing at this helper. Lets the
+                        pages run from an always-on box with no Netlify deploy (see README).
+    UPSTREAM            default https://freezer-scan.netlify.app (where the list lives)
     KEEP_AWAKE_SECS     poke the printer this often; default 60 (0 = off). The QL-820NWB's
                         network ports drop into standby after ~3 idle minutes and then
                         barely answer, so a poke inside that window keeps it reachable.
@@ -36,20 +40,33 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PORT = int(os.environ.get("HELPER_PORT", "8795"))
 MODEL = os.environ.get("HELPER_MODEL", "sonnet")
-CLAUDE_BIN = os.environ.get("CLAUDE_BIN", str(Path.home() / ".local" / "bin" / "claude.exe"))
+CLAUDE_BIN = os.environ.get("CLAUDE_BIN", str(Path.home() / ".local" / "bin" / ("claude.exe" if os.name == "nt" else "claude")))
 ORIGINS = [o.strip() for o in os.environ.get(
     "ALLOWED_ORIGINS", "https://freezer-scan.netlify.app").split(",") if o.strip()]
 MAX_BODY = 3_000_000
 TIMEOUT = 150
 ONE_AT_A_TIME = threading.Lock()
 LP_DIR = Path(os.environ.get("LABEL_PRINT_DIR", HERE.parent.parent / "label-print"))
-LP_PYTHON = LP_DIR / ".venv" / "Scripts" / "python.exe"
+LP_PYTHON = LP_DIR / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+# Optional: also serve the site itself, so it can be used without a Netlify deploy.
+# PUBLIC_DIR = the site's public/ folder; UPSTREAM = the Netlify site whose /api holds the
+# list (same data as the public site). /api/config is answered here, pointing at this helper.
+PUBLIC_DIR = Path(os.environ["PUBLIC_DIR"]).resolve() if os.environ.get("PUBLIC_DIR") else None
+UPSTREAM = os.environ.get("UPSTREAM", "https://freezer-scan.netlify.app").rstrip("/")
+MAX_PROXY_BODY = 12_000_000
+TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+         ".css": "text/css; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml",
+         ".ico": "image/x-icon", ".webmanifest": "application/manifest+json",
+         ".json": "application/json", ".jpg": "image/jpeg", ".txt": "text/plain; charset=utf-8"}
 PRINTER = os.environ.get("LABEL_PRINTER", "Garage QL-820NWB") if (LP_DIR / "labelprint.py").exists() else ""
 PRINT_LOCK = threading.Lock()   # one job at a time, in order
 KEEP_AWAKE_SECS = int(os.environ.get("KEEP_AWAKE_SECS", "60"))
@@ -209,16 +226,76 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path.rstrip("/").endswith("/health"):
+        path = self.path.split("?")[0]
+        if path.rstrip("/").endswith("/health"):
             return self.reply(200, {"ok": True, "printer": PRINTER or None})
+        if PUBLIC_DIR and path == "/api/config" and self.key_ok():
+            host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host", "")
+            return self.reply(200, {"suggestUrl": f"https://{host}" if host else None})
+        if PUBLIC_DIR and path.startswith("/api/"):
+            return self.proxy()
+        if PUBLIC_DIR:
+            return self.static(path)
         self.reply(404, {"error": "not found"})
 
+    def do_PUT(self):
+        return self.proxy() if PUBLIC_DIR and self.path.startswith("/api/") else self.reply(404, {"error": "not found"})
+
+    do_DELETE = do_PUT
+
+    def key_ok(self) -> bool:
+        return hmac.compare_digest(self.headers.get("x-key", "").encode(), KEY.encode())
+
+    def static(self, path: str):
+        rel = urllib.parse.unquote(path).lstrip("/") or "index.html"
+        f = (PUBLIC_DIR / rel).resolve()
+        if f.is_dir():
+            f = f / "index.html"
+        if PUBLIC_DIR not in f.parents or not f.is_file():
+            return self.reply(404, {"error": "not found"})
+        raw = f.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", TYPES.get(f.suffix.lower(), "application/octet-stream"))
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def proxy(self):
+        """Pass /api/... through to the Netlify site, so this copy shares its list."""
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return self.reply(400, {"error": "Bad request."})
+        if n > MAX_PROXY_BODY:
+            return self.reply(413, {"error": "Too big."})
+        body = self.rfile.read(n) if n else None
+        headers = {h: self.headers[h] for h in ("x-key", "content-type", "accept") if self.headers.get(h)}
+        req = urllib.request.Request(UPSTREAM + self.path, data=body, method=self.command, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                status, rh, raw = r.status, r.headers, r.read()
+        except urllib.error.HTTPError as e:
+            status, rh, raw = e.code, e.headers, e.read()
+        except OSError as e:
+            log(f"proxy failed: {self.command} {self.path.split('?')[0]}: {e}")
+            return self.reply(502, {"error": "Can't reach the freezer list right now. Try again."})
+        self.send_response(status)
+        for h in ("Content-Type", "Cache-Control"):
+            if rh.get(h):
+                self.send_header(h, rh[h])
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
     def do_POST(self):
+        if PUBLIC_DIR and self.path.startswith("/api/"):
+            return self.proxy()
         # tailscale serve may or may not strip its mount path, so match the tail.
         route = self.path.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
         if route not in ("suggest", "print"):
             return self.reply(404, {"error": "not found"})
-        if not hmac.compare_digest(self.headers.get("x-key", "").encode(), KEY.encode()):
+        if not self.key_ok():
             return self.reply(401, {"error": "This link is missing its key."})
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -268,7 +345,8 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(200, {"ok": True, "printer": PRINTER})
 
     def log_message(self, fmt, *args):
-        pass
+        if os.environ.get("HELPER_DEBUG"):
+            log(f"req {self.command} {self.path} origin={self.headers.get('Origin')} -> {args[1] if len(args) > 1 else ''}")
 
 
 def log(msg: str):
