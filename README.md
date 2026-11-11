@@ -14,7 +14,7 @@ the list on their phone. Labels print on plain paper or a Brother label printer.
 |---|---|
 | `public/index.html` | Scanning page. A Bluetooth scanner types each QR code like a keyboard (the page tells labels apart by the pause after a scan), or tap **Scan with camera** to use the phone's camera. |
 | `public/list.html` | Read-only family list: search, sort, filter by freezer. |
-| `public/label.html` | Label maker: a sheet of cut-out labels on plain paper (14 per page; bin labels twice as big), or 29 × 90 mm labels for a Brother DK-1201 roll. |
+| `public/label.html` | Label maker: a sheet of cut-out labels on plain paper (14 per page; bin labels twice as big), 29 × 90 mm labels for a Brother DK-1201 roll, or 23 × 23 mm squares for a DK-1221 roll (the code plus a short name). |
 | `public/bins.html` | Storage bins: scan a bin label to see its photos and notes; add a photo of what's inside. Search across all bins. |
 | `public/how.html` | The plain-English how-to page. |
 | `netlify/functions/api.mjs` | The only server code: stores the list in Netlify Blobs. |

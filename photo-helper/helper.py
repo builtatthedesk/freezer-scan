@@ -160,7 +160,10 @@ def origin_ok(origin: str) -> bool:
                for o in ORIGINS if o.startswith("https://"))
 
 
-def print_label(png: bytes, printer: str) -> None:
+LABEL_SIZES = {"29x90", "23x23"}   # the page's long label and small square (DK-1201, DK-1221)
+
+
+def print_label(png: bytes, printer: str, size: str = "") -> None:
     addr = printer_addr(printer)
     if addr and not wake(addr):
         raise RuntimeError(f"{addr[0]} not answering after 20 s")
@@ -169,6 +172,8 @@ def print_label(png: bytes, printer: str) -> None:
         path.write_bytes(png)
         # 9100 on the QL-8xx never answers a status request, hence --no-verify.
         cmd = [str(LP_PYTHON), "labelprint.py", "--printer", printer, "--no-verify", "image", str(path)]
+        if size:
+            cmd[-2:-2] = ["--label", size]
         proc = subprocess.run(cmd, cwd=str(LP_DIR), capture_output=True, text=True,
                               encoding="utf-8", timeout=60, stdin=subprocess.DEVNULL,
                               creationflags=NO_WINDOW)
@@ -344,19 +349,22 @@ class Handler(BaseHTTPRequestHandler):
             m = re.fullmatch(r"data:image/png;base64,([A-Za-z0-9+/=]+)", body.get("image", ""))
             png = base64.b64decode(m.group(1)) if m else b""
             printer = body.get("printer", PRINTER)
+            size = body.get("label", "")
         except Exception:
-            png, printer = b"", PRINTER
+            png, printer, size = b"", PRINTER, ""
         if png[:4] != b"\x89PNG":
             return self.reply(400, {"error": "That label did not come through (PNG only)."})
         if printer not in PRINTERS:
             return self.reply(400, {"error": "This computer doesn't know that printer."})
+        if size and (not isinstance(size, str) or size not in LABEL_SIZES):
+            return self.reply(400, {"error": "This computer doesn't know that label size."})
         with PRINT_LOCK:
             try:
-                print_label(png, printer)
+                print_label(png, printer, size)
             except Exception as e:  # noqa: BLE001
                 log(f"print failed on {printer}: {type(e).__name__}: {e}")
                 return self.reply(502, {"error": f"The {printer} didn't take it. Is it on? Try again."})
-        log(f"print ok on {printer}")
+        log(f"print ok on {printer}" + (f" ({size})" if size else ""))
         self.reply(200, {"ok": True, "printer": printer})
 
     def log_message(self, fmt, *args):

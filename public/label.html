@@ -47,12 +47,17 @@
   .previews.paper { grid-template-columns:repeat(2, minmax(0, 1fr)); }
   .previews.paper img { border-style:dashed; }
   .previews.paper img.big { grid-column:1 / -1; }
+  .previews.square { grid-template-columns:repeat(auto-fill, 150px); }
+  .previews.square img { width:150px; image-rendering:pixelated; }
   @media print {
     body { background:#fff; }
     .wrap { display:none; }
     .sheet { display:block; }
     .sheet.roll img { display:block; width:90mm; height:28.8mm; break-after:page; page-break-after:always; }
     .sheet.roll img:last-child { break-after:auto; page-break-after:auto; }
+    /* 23 x 23 mm squares: the printer's printable box is about 17 mm, centred on the label. */
+    .sheet.square img { display:block; width:17.1mm; height:17.1mm; margin:2.95mm auto; break-after:page; page-break-after:always; }
+    .sheet.square img:last-child { break-after:auto; page-break-after:auto; }
     /* Plain paper: two columns of 3.6 x 1.16 in labels with dashed cut lines; fits Letter and A4. */
     .sheet.paper { display:grid; grid-template-columns:repeat(2, 3.6in); gap:0.3in 0.2in; justify-content:center; align-content:start; }
     .sheet.paper img { width:3.6in; height:1.16in; border:1px dashed #888; break-inside:avoid; page-break-inside:avoid; }
@@ -75,6 +80,7 @@
       Print on:
       <button class="chip" type="button" data-media="paper" aria-pressed="false">Plain paper</button>
       <button class="chip" type="button" data-media="roll" aria-pressed="false">Label printer</button>
+      <button class="chip" type="button" data-media="square" aria-pressed="false">Small square (23 mm)</button>
     </div>
     <div class="kinds" role="group" aria-label="Label type">
       <button class="chip" type="button" data-kind="food" aria-pressed="true">Food</button>
@@ -112,6 +118,11 @@
       <li><b>On a phone:</b> Save images (or share them) and print them from Brother's label app.</li>
       <li>Each food label gets its own ID, so two packs of the same food are still told apart.</li>
     </ul>
+    <ul class="hint" id="hint-square" hidden>
+      <li>For a DK-1221 roll (23 mm × 23 mm squares). Load it in the printer first: these won't print right on the long labels.</li>
+      <li>The code holds the whole label; only a short name fits under it, so long names are cut off on the paper but not in the code.</li>
+      <li><b>On a computer:</b> Print, choose the Brother printer, paper size 23 mm × 23 mm, scale 100%.</li>
+    </ul>
     <ul class="hint" id="hint-paper" hidden>
       <li>Keep adding food above; everything lands on the same sheet, 14 labels to a page (bin labels print twice as big).</li>
       <li><b>Print</b> on any printer at <b>100% / actual size</b>, cut along the dashed lines and tape them on. Clear packing tape over the label keeps it readable in the freezer.</li>
@@ -139,14 +150,23 @@
   // 300 dpi: 90 x 29 mm.
   const W = 1063, H = 343, PAD = 18;
   let kind = "food", made = [], printed = 0;   // printed: labels at the front of a paper sheet already sent to the printer
-  let media = LS.get("lb.media") === "roll" ? "roll" : "paper";
+  const PAGE = { paper: "@page { size: auto; margin: 0.4in; }", roll: "@page { size: 90mm 29mm; margin: 0; }", square: "@page { size: 23mm 23mm; margin: 0; }" };
+  let media = PAGE[LS.get("lb.media")] && LS.get("lb.media") !== "paper" ? LS.get("lb.media") : "paper";
   function setMedia(md){
     media = md; LS.set("lb.media", md);
     document.querySelectorAll("[data-media]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.media === md)));
-    $("page-size").textContent = md === "paper" ? "@page { size: auto; margin: 0.4in; }" : "@page { size: 90mm 29mm; margin: 0; }";
+    $("page-size").textContent = PAGE[md];
     $("sheet").className = "sheet " + md;
     $("previews").classList.toggle("paper", md === "paper");
-    $("hint-roll").hidden = md !== "roll"; $("hint-paper").hidden = md !== "paper";
+    $("previews").classList.toggle("square", md === "square");
+    $("hint-roll").hidden = md !== "roll"; $("hint-paper").hidden = md !== "paper"; $("hint-square").hidden = md !== "square";
+    for (const l of made) { l.canvas = draw(l); l.url = null; }   // a square and a long label are drawn differently
+    const tooLong = made.filter(l => l.canvas.tooLong);
+    if (tooLong.length) {
+      made = made.filter(l => !l.canvas.tooLong);
+      msg(`Took off ${tooLong.length} label${tooLong.length === 1 ? "" : "s"} with a name too long to scan at 23 mm.`, true);
+    }
+    for (const p in remoteDone) delete remoteDone[p];              // redrawn: nothing on this sheet is printed yet
     $("clear").hidden = md !== "paper";
     $("make").textContent = md === "paper" ? "Add to sheet" : "Make labels";
     renderMade();
@@ -217,6 +237,50 @@
     for (const line of fit.lines){ ctx.fillText(line, x, y); y += fit.lh; }
     if (small){ ctx.font = `500 40px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`; ctx.fillText(small, x, y - fit.lh + 58); }
     return c;
+  }
+
+  // 23 x 23 mm (DK-1221): brother_ql's printable box is 202 x 202 dots. The code keeps the
+  // whole payload (the scanner needs it); the name goes underneath in one line, cut short
+  // if it has to be. Squares stay at least 4 dots so phones can read the code.
+  const SQ = 202, SQ_MIN_CELL = 4, SQ_TEXT_MIN = 30;
+  function drawSquare(payload, title){
+    const c = document.createElement("canvas"); c.width = SQ; c.height = SQ;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, SQ, SQ);
+    const qr = qrcode(0, "M"); qr.addData(payload, "Byte"); qr.make();
+    const n = qr.getModuleCount();
+    const font = s => `700 ${s}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+    let cell = Math.floor((SQ - SQ_TEXT_MIN) / (n + 2)), text = "";
+    if (cell >= SQ_MIN_CELL) {
+      const room = SQ - cell * (n + 2) + cell;           // text may use the bottom quiet zone
+      let size = Math.min(44, Math.floor(room * 0.8));
+      ctx.font = font(size);
+      while (size > 22 && ctx.measureText(title).width > SQ - 8) ctx.font = font(size -= 2);
+      text = title;
+      if (ctx.measureText(text).width > SQ - 8) {
+        while (text.length > 1 && ctx.measureText(text + "…").width > SQ - 8) text = text.slice(0, -1);
+        text = text.trimEnd() + "…";
+        c.cut = true;
+      }
+      c.fontSize = size;
+    } else {
+      cell = Math.floor(SQ / (n + 2));                   // no room for words: the code alone
+      if (cell < SQ_MIN_CELL) { c.tooLong = true; return c; }
+      c.noText = true;
+    }
+    const qs = cell * n, qx = Math.floor((SQ - qs) / 2), qy = text ? cell : Math.floor((SQ - qs) / 2);
+    ctx.fillStyle = "#000";
+    for (let r = 0; r < n; r++) for (let col = 0; col < n; col++)
+      if (qr.isDark(r, col)) ctx.fillRect(qx + col * cell, qy + r * cell, cell, cell);
+    if (text) {
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(text, SQ / 2, (qy + qs + SQ) / 2 + 1);
+    }
+    return c;
+  }
+  function draw(l){
+    l.size = media === "square" ? "23x23" : "29x90";
+    return media === "square" ? drawSquare(l.payload, l.title) : drawLabel(l.payload, l.title, l.small);
   }
 
   function msg(t, err){ $("msg").textContent = t; $("msg").classList.toggle("err", !!err); }
@@ -351,7 +415,8 @@
       }
       $("make").disabled = false;
     }
-    const fresh = labels.map(l => Object.assign(l, { canvas: drawLabel(l.payload, l.title, l.small) }));
+    const fresh = labels.map(l => Object.assign(l, { canvas: draw(l) }));
+    if (fresh.some(l => l.canvas.tooLong)) return msg("That name is too long for a 23 mm label: the code would be too small to scan. Shorten it, or use the long labels.", true);
     const restarted = media === "paper" && printed > 0;
     made = media === "paper" ? made.slice(printed).concat(fresh) : fresh;   // paper collects a whole sheet, minus what's printed
     printed = 0;
@@ -361,7 +426,8 @@
       msg((restarted ? "Printed labels cleared. " : "") + `Added ${fresh.length}. ${made.length} label${made.length === 1 ? "" : "s"} on the sheet` + (pages > 1 ? ` (${pages} pages).` : "."));
       if (kind === "food" || kind === "bin") { $("name").value = ""; $("copies").value = "1"; $("name").focus(); }
     } else {
-      msg(made.length === 1 ? "1 label ready." : made.length + " labels ready.");
+      const note = fresh.some(l => l.canvas.noText) ? " The name didn't fit, so it's just the code." : fresh.some(l => l.canvas.cut) ? " The name is cut short on the label; the code has all of it." : "";
+      msg((made.length === 1 ? "1 label ready." : made.length + " labels ready.") + note);
       $("out").scrollIntoView({ behavior: "smooth", block: "start" });
     }
   });
@@ -411,22 +477,22 @@
   }
   // Labels already printed from the current sheet, per printer, so a retry after a failure
   // resumes instead of printing the first ones again.
-  const remoteDone = {};
+  var remoteDone = {};   // var: setMedia clears it and may run first
   async function remotePrint(printer, btn){
     const list = made.slice();
     if (!list.length) return;
     let done = remoteDone[printer] || (remoteDone[printer] = new Set());
     const todo = list.filter(l => !done.has(l));
     if (!todo.length) done = remoteDone[printer] = new Set();   // all printed already: tap again = print the set again
-    const queue = todo.length ? todo : list, n = list.length, where = shortName(printer) + " printer";
+    const queue = (todo.length ? todo : list).map(l => ({ l, image: l.url, label: l.size })), n = list.length, where = shortName(printer) + " printer";
     btn.disabled = true;
     try {
-      for (const l of queue) {
+      for (const { l, image, label } of queue) {
         const at = list.indexOf(l) + 1;
         msg(n > 1 ? `Printing ${at} of ${n} on ${where}…` : `Printing on ${where}…`);
         let r;
         try {
-          r = await fetch(suggestUrl.replace(/\/$/, "") + "/print", { method: "POST", headers: { "x-key": key, "content-type": "application/json" }, body: JSON.stringify({ image: l.url, printer }) });
+          r = await fetch(suggestUrl.replace(/\/$/, "") + "/print", { method: "POST", headers: { "x-key": key, "content-type": "application/json" }, body: JSON.stringify({ image, printer, label }) });
         } catch { throw new Error(`Can't reach the computer that prints (label ${at} may or may not have printed). Is Tailscale on? Tap again to carry on from label ${at}.`); }
         const j = await r.json().catch(() => null);
         if (!r.ok) throw new Error(j && j.error ? `${j.error} Tap again to carry on from label ${at}.` : "Can't reach the computer that prints.");
@@ -447,7 +513,7 @@
       const b = ((await api("GET", "bins")).bins || {})[reprint[1]];
       if (!b) return msg("That bin isn't in the list any more.", true);
       const l = { payload: `BIN: ${b.name}\nID: ${reprint[1]}`, title: b.name, small: "Storage bin  ·  " + reprint[1], file: b.name + " " + reprint[1], big: true };
-      l.canvas = drawLabel(l.payload, l.title, l.small);
+      l.canvas = draw(l);
       made = media === "paper" ? made.concat([l]) : [l];
       renderMade();
       msg(`Label for ${b.name} ready to print.`);
