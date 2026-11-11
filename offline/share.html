@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Share &amp; back up</title>
+<meta name="theme-color" content="#1f6feb">
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --muted:#59636e; --line:#d6dbe1; --accent:#1f6feb; --ok:#1a7f37; --err:#cf222e; color-scheme:light dark; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0e1116; --card:#161b22; --ink:#e6edf3; --muted:#9198a1; --line:#30363d; --accent:#58a6ff; --ok:#3fb950; --err:#ff7b72; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width:560px; margin:0 auto; padding:16px; }
+  h1 { font-size:24px; margin:4px 0 4px; }
+  .sub { color:var(--muted); margin:0 0 14px; font-size:15px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin:0 0 12px; }
+  .card h2 { font-size:17px; margin:0 0 4px; }
+  .card p { margin:4px 0 10px; color:var(--muted); font-size:15px; }
+  button, .btn { display:inline-block; font:inherit; font-weight:600; padding:10px 16px; min-height:44px; border-radius:10px; border:0; background:var(--accent); color:#fff; cursor:pointer; text-decoration:none; }
+  button.alt, .btn.alt { background:transparent; color:var(--accent); border:1px solid var(--line); }
+  button:disabled { opacity:.6; }
+  .msg { margin:8px 0 0; font-size:15px; }
+  .msg.ok { color:var(--ok); } .msg.err { color:var(--err); }
+  .stats { font-size:15px; color:var(--muted); }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Share &amp; back up</h1>
+  <p class="sub"><a href="./">Back to scanning</a> · <span class="stats" id="stats">Loading…</span></p>
+
+  <div class="card" id="install-card" hidden>
+    <h2>Put it on the home screen</h2>
+    <p>Opens like an app and works with no internet.</p>
+    <button type="button" id="install">Install</button>
+  </div>
+
+  <div class="card">
+    <h2>📤 Share the list</h2>
+    <p>Sends a copy of what's in your freezers, dated today. They open it on their phone, no app needed. It's a copy, so it won't change when you scan; send a new one when they need it.</p>
+    <button type="button" id="share">Share the list</button>
+    <a class="btn alt" href="list.html#k=local&amp;print">Print the list</a>
+    <p class="msg" id="share-msg" role="status"></p>
+  </div>
+
+  <div class="card">
+    <h2>💾 Back up</h2>
+    <p>Your list lives only on this phone. A backup is one file with everything (food, bins, photos). Save it to Google Drive, email it to yourself, or send it to another phone.</p>
+    <button type="button" id="backup">Back up now</button>
+    <p class="msg" id="backup-msg" role="status"></p>
+  </div>
+
+  <div class="card">
+    <h2>♻️ Restore a backup</h2>
+    <p>Pick a backup file. It's added to what's here: nothing on this phone is deleted, and for each label the most recent change wins.</p>
+    <button type="button" class="alt" id="restore">Choose backup file</button>
+    <input type="file" id="restore-file" accept=".json,application/json,text/plain" hidden>
+    <p class="msg" id="restore-msg" role="status"></p>
+  </div>
+
+  <p class="sub" id="storage"></p>
+</div>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const LS = { get(k){ try { return localStorage.getItem(k); } catch (e) { return null; } },
+               set(k,v){ try { localStorage.setItem(k,v); } catch (e) {} } };
+  const msg = (id, t, kind) => { const m = $(id); m.textContent = t; m.className = "msg" + (kind ? " " + kind : ""); };
+  const stamp = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
+  async function api(method, path, body){
+    const r = await fetch("/api/" + path, { method, cache: "no-store", headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
+    return j;
+  }
+
+  async function stats(){
+    try {
+      const [{ items }, { bins }] = await Promise.all([api("GET", "items"), api("GET", "bins")]);
+      const inside = Object.values(items).filter(i => i.status === "in").length;
+      const nb = Object.keys(bins).length;
+      const last = LS.get("fo.backupAt");
+      $("stats").textContent = `${inside} in the freezers` + (nb ? `, ${nb} bin${nb === 1 ? "" : "s"}` : "") +
+        " · " + (last ? "last backup " + new Date(last).toLocaleDateString() : "never backed up");
+    } catch (e) { $("stats").textContent = "Couldn't read the list (" + e.message + ")."; }
+  }
+  stats();
+
+  // Hand a file to the share sheet (Quick Share, Drive, email, messages...), or
+  // save it to Downloads where sharing files isn't possible.
+  async function sendFile(file, title){
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title }); return "shared"; }
+      catch (e) { if (e.name === "AbortError") return "cancelled"; }
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(file); a.download = file.name;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    return "saved";
+  }
+
+  // ---------------------------------------------------------------- share
+  // One self-contained web page: the list as of now, built in. Opens in any browser,
+  // shows its own date and how old it is, and can't change.
+  $("share").addEventListener("click", async () => {
+    const btn = $("share"); btn.disabled = true; msg("share-msg", "Making the copy…");
+    try {
+      const [{ items }, { bins }] = await Promise.all([api("GET", "items"), api("GET", "bins")]);
+      const inside = Object.values(items).filter(i => i.status === "in")
+        .map(i => ({ t: i.text, d: i.printed || (i.inAt || i.firstSeen || "").slice(0, 10), f: i.shelf || "" }));
+      const binList = Object.values(bins).map(b => ({ n: b.name, x: b.notes || "" })).sort((a, b) => a.n.localeCompare(b.n));
+      const file = new File([snapshotPage({ at: new Date().toISOString(), items: inside, bins: binList })],
+        `Freezer list ${stamp()}.html`, { type: "text/html" });
+      const how = await sendFile(file, "Freezer list");
+      msg("share-msg", how === "shared" ? "Sent." : how === "saved" ? "Saved to Downloads. Send that file to whoever wants the list." : "", "ok");
+    } catch (e) { msg("share-msg", "Couldn't make the copy (" + e.message + ").", "err"); }
+    finally { btn.disabled = false; }
+  });
+
+  function snapshotPage(data){
+    const safe = JSON.stringify(data).replace(/</g, "\\u003c");
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Freezer list</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1b1f24;--muted:#59636e;--line:#d6dbe1;--warn:#9a6700;--bad:#cf222e;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--card:#161b22;--ink:#e6edf3;--muted:#9198a1;--line:#30363d;--warn:#d29922;--bad:#ff7b72}}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.w{max-width:620px;margin:0 auto;padding:16px}h1{margin:0 0 6px;font-size:24px}
+.asof{background:#fff3cd;color:#664d03;border-radius:10px;padding:10px 12px;font-weight:600;margin:0 0 12px}
+input{width:100%;font:inherit;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);margin:0 0 12px}
+h2{font-size:17px;margin:16px 0 6px}ul{list-style:none;margin:0;padding:0;background:var(--card);border:1px solid var(--line);border-radius:12px}
+li{display:flex;justify-content:space-between;gap:10px;padding:9px 14px;border-top:1px solid var(--line)}li:first-child{border-top:0}
+.age{color:var(--muted);white-space:nowrap;font-size:14px}.mid{color:var(--warn)}.old{color:var(--bad)}.n{color:var(--muted);font-size:14px}
+@media print{.asof{border:1px solid #999}input{display:none}}
+</style></head><body><div class="w"><h1>What's in the freezers</h1>
+<p class="asof" id="asof"></p><input id="q" type="search" placeholder="Search" aria-label="Search">
+<div id="out"></div></div>
+<script>
+const D=${safe};
+const at=new Date(D.at),ago=Math.floor((Date.now()-at)/864e5);
+document.getElementById("asof").textContent="Copy made "+at.toLocaleString([], {weekday:"short",month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"})+(ago>0?" ("+ago+(ago===1?" day":" days")+" ago)":"")+". It doesn't update: ask for a new copy for what's in there now.";
+function age(d){const n=Math.max(0,Math.floor((Date.now()-Date.parse(d+"T00:00:00"))/864e5));if(!isFinite(n))return["",""];
+const c=n>=180?"old":n>=90?"mid":"";return[c,n<14?(n===0?"today":n+(n===1?" day":" days")):n<60?Math.round(n/7)+" wks":(n<365?Math.round(n/30.4):(n/30.4).toFixed(1))+" mos"]}
+function el(t,c,x){const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
+function draw(){const q=document.getElementById("q").value.trim().toLowerCase(),out=document.getElementById("out");out.innerHTML="";
+const by=new Map();for(const i of D.items){if(q&&!i.t.toLowerCase().includes(q))continue;const f=i.f||"Freezer";if(!by.has(f))by.set(f,[]);by.get(f).push(i)}
+const names=Array.from(by.keys()).sort();if(!names.length)out.append(el("p","n",q?"Nothing matches.":"The freezers are empty."));
+for(const f of names){const L=by.get(f);out.append(el("h2","",f+" ("+L.length+")"));const ul=el("ul");
+for(const i of L.sort((a,b)=>a.d<b.d?-1:1)){const li=el("li"),[c,a]=age(i.d);li.append(el("span","",i.t),el("span","age "+c,a));ul.append(li)}out.append(ul)}
+const bins=D.bins.filter(b=>!q||(b.n+" "+b.x).toLowerCase().includes(q));
+if(bins.length){out.append(el("h2","","Storage bins"));const ul=el("ul");for(const b of bins){const li=el("li");li.append(el("span","",b.n),el("span","n",b.x));ul.append(li)}out.append(ul)}}
+document.getElementById("q").addEventListener("input",draw);draw();
+<\/script></body></html>`;
+  }
+
+  // ---------------------------------------------------------------- backup
+  $("backup").addEventListener("click", async () => {
+    const btn = $("backup"); btn.disabled = true; msg("backup-msg", "Gathering everything…");
+    try {
+      // The list as one JSON object, with the photos added one at a time as separate
+      // pieces of the file, so a phone with many photos never holds them all as one string.
+      const data = await api("GET", "backup");
+      const parts = [JSON.stringify(data).replace(/}$/, ',"photos":{')];
+      let first = true, n = 0;
+      for (const [bin, b] of Object.entries(data.bins))
+        for (const ph of b.photos || [])
+          for (const size of ["full", "thumb"]) {
+            const r = await fetch(`/api/photo/${encodeURIComponent(bin)}/${encodeURIComponent(ph.id)}?size=${size}`);
+            if (!r.ok) continue;
+            parts.push((first ? "" : ",") + JSON.stringify(`${bin}/${ph.id}/${size}`) + ':"', await dataUrl(await r.blob()), '"');
+            first = false;
+            if (size === "full") msg("backup-msg", `Gathering photos… ${++n}`);
+          }
+      parts.push("}}");
+      const file = new File(parts, `freezer-backup-${stamp()}.json`, { type: "application/json" });
+      const how = await sendFile(file, "Freezer backup");
+      if (how === "cancelled") return msg("backup-msg", "");
+      LS.set("fo.backupAt", new Date().toISOString());
+      const kb = Math.max(1, Math.round(file.size / 1024));
+      msg("backup-msg", (how === "shared" ? "Backup sent" : "Backup saved to Downloads; move it somewhere off this phone (Drive, email)") + ` (${kb < 1024 ? kb + " KB" : (kb / 1024).toFixed(1) + " MB"}).`, "ok");
+      stats();
+    } catch (e) { msg("backup-msg", "Backup failed (" + e.message + ").", "err"); }
+    finally { btn.disabled = false; }
+  });
+
+  const dataUrl = (b) => new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => bad(r.error); r.readAsDataURL(b); });
+
+  // ---------------------------------------------------------------- restore
+  $("restore").addEventListener("click", () => $("restore-file").click());
+  $("restore-file").addEventListener("change", async () => {
+    const f = $("restore-file").files[0]; $("restore-file").value = "";
+    if (!f) return;
+    msg("restore-msg", "Reading " + f.name + "…");
+    try {
+      let data;
+      try { data = JSON.parse(await f.text()); } catch (e) { throw new Error("that file isn't a Freezer Scan backup"); }
+      if (data && data.kind === "backup" && data.at && !confirm(`Add the backup from ${new Date(data.at).toLocaleString()} to this phone's list?`)) return msg("restore-msg", "");
+      const photos = data && typeof data.photos === "object" && data.photos ? data.photos : {};
+      const r = await api("POST", "restore", Object.assign({}, data, { photos: undefined }));
+      // Photos go in one at a time; any this phone already has are skipped.
+      let photosAdded = 0;
+      for (const [k, v] of Object.entries(photos)) {
+        const m = k.match(/^([\w.:-]+)\/([\w.:-]+)\/(full|thumb)$/);
+        if (!m || typeof v !== "string") continue;
+        try {
+          const j = await api("PUT", `restore-photo/${encodeURIComponent(m[1])}/${encodeURIComponent(m[2])}/${m[3]}`, { data: v });
+          if (j.added && m[3] === "full") msg("restore-msg", `Restoring photos… ${++photosAdded}`);
+        } catch (e) { /* a photo the file's bins don't list, or a damaged one: skip it */ }
+      }
+      const parts = [`${r.added} new label${r.added === 1 ? "" : "s"}`, `${r.updated} updated`];
+      if (r.binsAdded) parts.push(`${r.binsAdded} bin${r.binsAdded === 1 ? "" : "s"}`);
+      if (photosAdded) parts.push(`${photosAdded} photo${photosAdded === 1 ? "" : "s"}`);
+      msg("restore-msg", "Restored: " + parts.join(", ") + ".", "ok");
+      stats();
+    } catch (e) { msg("restore-msg", "Couldn't restore (" + e.message + ").", "err"); }
+  });
+
+  // ---------------------------------------------------------------- install, storage
+  let installEvt = null;
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; $("install-card").hidden = false; });
+  $("install").addEventListener("click", async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; $("install-card").hidden = true; });
+  if (navigator.storage && navigator.storage.persisted) navigator.storage.persisted().then(p => {
+    $("storage").textContent = p ? "This phone keeps the list even when space runs low." : "Tip: install it on the home screen so the phone keeps the list safe when space runs low.";
+  }).catch(() => {});
+})();
+</script>
+</body>
+</html>
