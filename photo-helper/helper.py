@@ -351,12 +351,12 @@ class Handler(BaseHTTPRequestHandler):
             printer = body.get("printer", PRINTER)
             size = body.get("label", "")
         except Exception:
-            png, printer, size = b"", PRINTER, 
+            png, printer, size = b"", PRINTER, ""
         if png[:4] != b"\x89PNG":
             return self.reply(400, {"error": "That label did not come through (PNG only)."})
         if printer not in PRINTERS:
             return self.reply(400, {"error": "This computer doesn't know that printer."})
-        if size and size not in LABEL_SIZES:
+        if size and (not isinstance(size, str) or size not in LABEL_SIZES):
             return self.reply(400, {"error": "This computer doesn't know that label size."})
         with PRINT_LOCK:
             try:

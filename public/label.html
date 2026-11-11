@@ -161,6 +161,11 @@
     $("previews").classList.toggle("square", md === "square");
     $("hint-roll").hidden = md !== "roll"; $("hint-paper").hidden = md !== "paper"; $("hint-square").hidden = md !== "square";
     for (const l of made) { l.canvas = draw(l); l.url = null; }   // a square and a long label are drawn differently
+    const tooLong = made.filter(l => l.canvas.tooLong);
+    if (tooLong.length) {
+      made = made.filter(l => !l.canvas.tooLong);
+      msg(`Took off ${tooLong.length} label${tooLong.length === 1 ? "" : "s"} with a name too long to scan at 23 mm.`, true);
+    }
     for (const p in remoteDone) delete remoteDone[p];              // redrawn: nothing on this sheet is printed yet
     $("clear").hidden = md !== "paper";
     $("make").textContent = md === "paper" ? "Add to sheet" : "Make labels";
@@ -479,15 +484,15 @@
     let done = remoteDone[printer] || (remoteDone[printer] = new Set());
     const todo = list.filter(l => !done.has(l));
     if (!todo.length) done = remoteDone[printer] = new Set();   // all printed already: tap again = print the set again
-    const queue = todo.length ? todo : list, n = list.length, where = shortName(printer) + " printer";
+    const queue = (todo.length ? todo : list).map(l => ({ l, image: l.url, label: l.size })), n = list.length, where = shortName(printer) + " printer";
     btn.disabled = true;
     try {
-      for (const l of queue) {
+      for (const { l, image, label } of queue) {
         const at = list.indexOf(l) + 1;
         msg(n > 1 ? `Printing ${at} of ${n} on ${where}…` : `Printing on ${where}…`);
         let r;
         try {
-          r = await fetch(suggestUrl.replace(/\/$/, "") + "/print", { method: "POST", headers: { "x-key": key, "content-type": "application/json" }, body: JSON.stringify({ image: l.url, printer, label: l.size }) });
+          r = await fetch(suggestUrl.replace(/\/$/, "") + "/print", { method: "POST", headers: { "x-key": key, "content-type": "application/json" }, body: JSON.stringify({ image, printer, label }) });
         } catch { throw new Error(`Can't reach the computer that prints (label ${at} may or may not have printed). Is Tailscale on? Tap again to carry on from label ${at}.`); }
         const j = await r.json().catch(() => null);
         if (!r.ok) throw new Error(j && j.error ? `${j.error} Tap again to carry on from label ${at}.` : "Can't reach the computer that prints.");
