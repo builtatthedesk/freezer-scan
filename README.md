@@ -110,7 +110,8 @@ node offline/build.mjs      # -> dist-offline/
 ```
 
 Host `dist-offline/` on any static https site, at its root or in a sub-folder
-(Netlify, GitHub Pages, ...); no functions or keys. On the phone: open it once
+(Netlify, GitHub Pages, ...); no functions or keys. This repo publishes it on every change to
+`main` (`.github/workflows/offline-pages.yml`): https://builtatthedesk.github.io/freezer-scan/ On the phone: open it once
 in Chrome, then **Install app** / **Add to Home screen**.
 
 - Scanning, the list, label making (plain paper, Brother roll or 23 mm squares),
