@@ -7,3 +7,4 @@ docs/front.png
 docs/storage-mode.png
 .env
 data/
+dist-offline/

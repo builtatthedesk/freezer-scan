@@ -98,6 +98,33 @@ netlify dev
 container, storing the list as files. Guides for a VPS (Caddy HTTPS) and a home
 server (Tailscale HTTPS) are in [selfhost/README.md](selfhost/README.md).
 
+## Offline edition (one phone, no server)
+
+`offline/` turns the same pages into an app that keeps the list on one Android
+phone and never needs the internet after the first visit. A service worker
+(`offline/sw.js`) answers the pages' `/api/...` calls from the phone's own storage
+(IndexedDB), and caches the pages, so it works in airplane mode.
+
+```bash
+node offline/build.mjs      # -> dist-offline/
+```
+
+Host `dist-offline/` at the **root** of any static https site (Netlify, GitHub
+Pages with a custom domain, ...); no functions or keys. On the phone: open it once
+in Chrome, then **Install app** / **Add to Home screen**.
+
+- Scanning, the list, label making (plain paper, Brother roll or 23 mm squares),
+  storage bins and their photos all work offline. Label IDs come from a counter on the phone.
+- **Share & back up** (`offline/share.html`):
+  - **Share the list** sends a single web page with the list built in, dated, read-only: it opens in any browser and says how old it is.
+  - **Back up** saves one JSON file with everything, photos included.
+  - **Restore** merges a backup in: nothing is deleted, the newest scan of each label wins, and doing it twice changes nothing.
+- Not in this edition: the live family list (send a copy instead), photo → label
+  suggestions (need the internet), and one-tap printing. Print through Brother's
+  iPrint&Label app over Bluetooth or the printer's Wi-Fi Direct, using **Save images**.
+- The list belongs to the web address it was installed from, and clearing Chrome's
+  data for that site deletes it, so back up.
+
 ## Licence
 
 MIT. Built at the Desk.
