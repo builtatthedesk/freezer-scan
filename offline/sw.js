@@ -6,15 +6,21 @@
 //
 // Same routes as netlify/functions/api.mjs, minus keys (one phone, one owner),
 // plus two of its own for the Share & back up page:
-//   GET  /api/backup    everything, photos included, as one JSON object
-//   POST /api/restore   merge a backup in (newest scan of each label wins)
+//   GET  /api/backup             everything except photo data, as one JSON object
+//                                (the page adds the photos one by one; see share.html)
+//   POST /api/restore            merge a backup's labels, bins and counters in
+//   PUT  /api/restore-photo/:bin/:pid/:size   one photo from a backup, if missing here
+// Every saved item gets a "modAt" stamp, so a restore can tell which copy of a label
+// was changed last, even for changes that aren't scans (marked used, moved freezer).
 "use strict";
 const VERSION = "__VERSION__";            // filled in by build.mjs; a new value = an update
 const CACHE = "freezer-offline-" + VERSION;
 const FILES = __FILES__;                   // the app's files, filled in by build.mjs
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // cache:"reload" skips the browser's HTTP cache, so an update never stores old files.
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES.map(f => new Request(f, { cache: "reload" }))))
+    .then(() => self.skipWaiting()));
 });
 self.addEventListener("activate", (e) => {
   e.waitUntil(caches.keys()
@@ -103,7 +109,6 @@ function jpegFrom(dataUrl, max){
   for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
   return new Blob([a], { type: "image/jpeg" });
 }
-const blobToDataUrl = (b) => new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => bad(r.error); r.readAsDataURL(b); });
 const photoKeys = (bin, pid) => [`${bin}/${pid}/full`, `${bin}/${pid}/thumb`];
 const dropPhotos = (bin, pids) => tx("photos", "readwrite", (t) => { for (const pid of pids) for (const k of photoKeys(bin, pid)) t.objectStore("photos").delete(k); });
 // Today on this phone's clock, as the server would date a label ID.
@@ -134,6 +139,7 @@ async function api(req, url, rest){
   if (path[0] === "items" && path[1] && ID_RE.test(path[1]) && !path[2] && (M === "PUT" || M === "DELETE")) {
     const body = M === "PUT" ? cleanItem(await readJson(req)) : null;
     if (M === "PUT" && !body) return json(400, { error: "bad item" });
+    if (body) body.modAt = now;
     await kvUpdate("items", (items) => { if (body) items[path[1]] = body; else delete items[path[1]]; });
     return json(200, { ok: true });
   }
@@ -213,62 +219,75 @@ async function api(req, url, rest){
       return json(400, { error: "That file isn't a Freezer Scan backup." });
     return json(200, await restore(b));
   }
+  if (M === "PUT" && path[0] === "restore-photo" && ID_RE.test(path[1] || "") && ID_RE.test(path[2] || "") && (path[3] === "full" || path[3] === "thumb") && !path[4]) {
+    const k = `${path[1]}/${path[2]}/${path[3]}`;
+    const bins = (await kvGet("bins")) || {};
+    if (!((bins[path[1]] || {}).photos || []).some(p => p.id === path[2])) return json(404, { error: "no such photo in this bin" });
+    const blob = jpegFrom(((await readJson(req)) || {}).data, path[3] === "full" ? MAX_PHOTO_BYTES : MAX_THUMB_BYTES);
+    if (!blob) return json(400, { error: "bad photo" });
+    const added = await tx("photos", "readwrite", async (t) => {
+      const s = t.objectStore("photos");
+      if ((await done(s.getKey(k))) !== undefined) return false;
+      s.put(blob, k);
+      return true;
+    });
+    return json(200, { ok: true, added });
+  }
   return json(404, { error: "not found" });
 }
 
 // ------------------------------------------------------------------ backup / restore
 async function backup(now){
   const [items, bins, ids] = await Promise.all([kvGet("items"), kvGet("bins"), kvGet("ids")]);
-  const photos = {};
-  for (const [id, bin] of Object.entries(bins || {}))
-    for (const p of bin.photos || [])
-      for (const k of photoKeys(id, p.id)) {
-        const b = await tx("photos", "readonly", t => done(t.objectStore("photos").get(k)));
-        if (b) photos[k] = await blobToDataUrl(b);
-      }
-  return { app: "freezer-scan", kind: "backup", version: 1, at: now, items: items || {}, bins: bins || {}, ids: ids || {}, photos };
+  return { app: "freezer-scan", kind: "backup", version: 1, at: now, items: items || {}, bins: bins || {}, ids: ids || {} };
 }
 
-// Merge, never wipe: a label already on this phone keeps whichever copy was scanned
-// last; bins keep the newest edit and gain any photos they were missing. Restoring
-// the same file twice changes nothing.
+// Merge, never wipe: a label already on this phone keeps whichever copy was changed
+// last (modAt, else its last scan; on a tie this phone's copy stays). Bins keep the
+// newest edit and gain any photos they were missing. Restoring twice changes nothing.
+// Everything is checked before anything is saved, so a bad file changes nothing.
+function cleanBin(bin){
+  if (!bin || typeof bin !== "object" || typeof bin.name !== "string") return null;
+  const name = bin.name.replace(/\s+/g, " ").trim();
+  if (!name || name.length > 80) return null;
+  const str = (v) => typeof v === "string" ? v.slice(0, 40) : undefined;
+  const photos = (Array.isArray(bin.photos) ? bin.photos : [])
+    .filter(p => p && typeof p === "object" && ID_RE.test(p.id || ""))
+    .map(p => ({ id: p.id, at: str(p.at) || "" })).slice(0, MAX_PHOTOS);
+  return { name, notes: typeof bin.notes === "string" ? bin.notes.slice(0, 2000) : "", photos,
+           createdAt: str(bin.createdAt) || "", updatedAt: str(bin.updatedAt) || "" };
+}
+const stampOf = (it) => String((it && (it.modAt || it.lastScan)) || "");
 async function restore(b){
-  const later = (a, c, f) => String((a && a[f]) || "") >= String((c && c[f]) || "");
-  let added = 0, updated = 0, binsAdded = 0, photosAdded = 0;
+  const inItems = [], inBins = [];
+  for (const [id, raw] of Object.entries(b.items || {})) {
+    const it = ID_RE.test(id) && cleanItem(raw);
+    if (!it) continue;
+    if (typeof raw.modAt === "string" && raw.modAt.length <= 40) it.modAt = raw.modAt;
+    inItems.push([id, it]);
+  }
+  for (const [id, raw] of Object.entries(b.bins && typeof b.bins === "object" ? b.bins : {})) {
+    const bin = ID_RE.test(id) && cleanBin(raw);
+    if (bin) inBins.push([id, bin]);
+  }
+  let added = 0, updated = 0, binsAdded = 0;
   await kvUpdate("items", (items) => {
-    for (const [id, raw] of Object.entries(b.items || {})) {
-      const it = ID_RE.test(id) && cleanItem(raw);
-      if (!it) continue;
+    for (const [id, it] of inItems) {
       if (!items[id]) { items[id] = it; added++; }
-      else if (later(it, items[id], "lastScan") && JSON.stringify(it) !== JSON.stringify(items[id])) { items[id] = it; updated++; }
+      else if (stampOf(it) > stampOf(items[id])) { items[id] = it; updated++; }
     }
   });
-  const wanted = [];
   await kvUpdate("bins", (bins) => {
-    for (const [id, bin] of Object.entries(b.bins || {})) {
-      if (!ID_RE.test(id) || !bin || typeof bin.name !== "string") continue;
+    for (const [id, bin] of inBins) {
       const have = bins[id];
-      const photos = (bin.photos || []).filter(p => p && ID_RE.test(p.id || ""));
-      if (!have) { binsAdded++; bins[id] = Object.assign({}, bin, { photos }); }
-      else {
-        const merged = Object.assign({}, later(bin, have, "updatedAt") ? bin : have);
-        const ids = new Set((have.photos || []).map(p => p.id));
-        merged.photos = (have.photos || []).concat(photos.filter(p => !ids.has(p.id))).slice(0, MAX_PHOTOS);
-        bins[id] = merged;
-      }
-      for (const p of bins[id].photos) wanted.push(...photoKeys(id, p.id));
-    }
-  });
-  await tx("photos", "readwrite", async (t) => {
-    const s = t.objectStore("photos");
-    for (const k of wanted) {
-      const data = (b.photos || {})[k];
-      if (!data || (await done(s.getKey(k))) !== undefined) continue;
-      const blob = jpegFrom(data, MAX_PHOTO_BYTES);
-      if (blob) { s.put(blob, k); if (k.endsWith("/full")) photosAdded++; }
+      if (!have) { binsAdded++; bins[id] = bin; continue; }
+      const merged = Object.assign({}, String(bin.updatedAt) > String(have.updatedAt || "") ? bin : have);
+      const ids = new Set((have.photos || []).map(p => p.id));
+      merged.photos = (have.photos || []).concat(bin.photos.filter(p => !ids.has(p.id))).slice(0, MAX_PHOTOS);
+      bins[id] = merged;
     }
   });
   // Label counters never go backwards, so new labels can't reuse a restored ID.
   await kvUpdate("ids", (c) => { for (const [d, n] of Object.entries(b.ids || {})) if (/^\d{6}$/.test(d) && Number(n) > (c[d] || 0)) c[d] = Number(n); });
-  return { ok: true, added, updated, binsAdded, photosAdded };
+  return { ok: true, added, updated, binsAdded };
 }

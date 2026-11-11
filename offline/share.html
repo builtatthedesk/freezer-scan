@@ -53,7 +53,7 @@
 
   <div class="card">
     <h2>♻️ Restore a backup</h2>
-    <p>Pick a backup file. It's added to what's here: nothing on this phone is deleted, and for each label the most recent scan wins.</p>
+    <p>Pick a backup file. It's added to what's here: nothing on this phone is deleted, and for each label the most recent change wins.</p>
     <button type="button" class="alt" id="restore">Choose backup file</button>
     <input type="file" id="restore-file" accept=".json,application/json,text/plain" hidden>
     <p class="msg" id="restore-msg" role="status"></p>
@@ -145,11 +145,11 @@ document.getElementById("asof").textContent="Copy made "+at.toLocaleString([], {
 function age(d){const n=Math.max(0,Math.floor((Date.now()-Date.parse(d+"T00:00:00"))/864e5));if(!isFinite(n))return["",""];
 const c=n>=180?"old":n>=90?"mid":"";return[c,n<14?(n===0?"today":n+(n===1?" day":" days")):n<60?Math.round(n/7)+" wks":(n<365?Math.round(n/30.4):(n/30.4).toFixed(1))+" mos"]}
 function el(t,c,x){const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
-function draw(){const q=document.getElementById("q").value.trim().toLowerCase(),out=document.getElementById("out");out.replaceChildren();
-const by={};for(const i of D.items){if(q&&!i.t.toLowerCase().includes(q))continue;(by[i.f||"Freezer"]=by[i.f||"Freezer"]||[]).push(i)}
-const names=Object.keys(by).sort();if(!names.length)out.append(el("p","n",q?"Nothing matches.":"The freezers are empty."));
-for(const f of names){out.append(el("h2","",f+" ("+by[f].length+")"));const ul=el("ul");
-for(const i of by[f].sort((a,b)=>a.d<b.d?-1:1)){const li=el("li"),[c,a]=age(i.d);li.append(el("span","",i.t),el("span","age "+c,a));ul.append(li)}out.append(ul)}
+function draw(){const q=document.getElementById("q").value.trim().toLowerCase(),out=document.getElementById("out");out.innerHTML="";
+const by=new Map();for(const i of D.items){if(q&&!i.t.toLowerCase().includes(q))continue;const f=i.f||"Freezer";if(!by.has(f))by.set(f,[]);by.get(f).push(i)}
+const names=Array.from(by.keys()).sort();if(!names.length)out.append(el("p","n",q?"Nothing matches.":"The freezers are empty."));
+for(const f of names){const L=by.get(f);out.append(el("h2","",f+" ("+L.length+")"));const ul=el("ul");
+for(const i of L.sort((a,b)=>a.d<b.d?-1:1)){const li=el("li"),[c,a]=age(i.d);li.append(el("span","",i.t),el("span","age "+c,a));ul.append(li)}out.append(ul)}
 const bins=D.bins.filter(b=>!q||(b.n+" "+b.x).toLowerCase().includes(q));
 if(bins.length){out.append(el("h2","","Storage bins"));const ul=el("ul");for(const b of bins){const li=el("li");li.append(el("span","",b.n),el("span","n",b.x));ul.append(li)}out.append(ul)}}
 document.getElementById("q").addEventListener("input",draw);draw();
@@ -160,8 +160,22 @@ document.getElementById("q").addEventListener("input",draw);draw();
   $("backup").addEventListener("click", async () => {
     const btn = $("backup"); btn.disabled = true; msg("backup-msg", "Gathering everything…");
     try {
+      // The list as one JSON object, with the photos added one at a time as separate
+      // pieces of the file, so a phone with many photos never holds them all as one string.
       const data = await api("GET", "backup");
-      const file = new File([JSON.stringify(data)], `freezer-backup-${stamp()}.json`, { type: "application/json" });
+      const parts = [JSON.stringify(data).replace(/}$/, ',"photos":{')];
+      let first = true, n = 0;
+      for (const [bin, b] of Object.entries(data.bins))
+        for (const ph of b.photos || [])
+          for (const size of ["full", "thumb"]) {
+            const r = await fetch(`/api/photo/${encodeURIComponent(bin)}/${encodeURIComponent(ph.id)}?size=${size}`);
+            if (!r.ok) continue;
+            parts.push((first ? "" : ",") + JSON.stringify(`${bin}/${ph.id}/${size}`) + ':"', await dataUrl(await r.blob()), '"');
+            first = false;
+            if (size === "full") msg("backup-msg", `Gathering photos… ${++n}`);
+          }
+      parts.push("}}");
+      const file = new File(parts, `freezer-backup-${stamp()}.json`, { type: "application/json" });
       const how = await sendFile(file, "Freezer backup");
       if (how === "cancelled") return msg("backup-msg", "");
       LS.set("fo.backupAt", new Date().toISOString());
@@ -171,6 +185,8 @@ document.getElementById("q").addEventListener("input",draw);draw();
     } catch (e) { msg("backup-msg", "Backup failed (" + e.message + ").", "err"); }
     finally { btn.disabled = false; }
   });
+
+  const dataUrl = (b) => new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => bad(r.error); r.readAsDataURL(b); });
 
   // ---------------------------------------------------------------- restore
   $("restore").addEventListener("click", () => $("restore-file").click());
@@ -182,10 +198,21 @@ document.getElementById("q").addEventListener("input",draw);draw();
       let data;
       try { data = JSON.parse(await f.text()); } catch (e) { throw new Error("that file isn't a Freezer Scan backup"); }
       if (data && data.kind === "backup" && data.at && !confirm(`Add the backup from ${new Date(data.at).toLocaleString()} to this phone's list?`)) return msg("restore-msg", "");
-      const r = await api("POST", "restore", data);
+      const photos = data && typeof data.photos === "object" && data.photos ? data.photos : {};
+      const r = await api("POST", "restore", Object.assign({}, data, { photos: undefined }));
+      // Photos go in one at a time; any this phone already has are skipped.
+      let photosAdded = 0;
+      for (const [k, v] of Object.entries(photos)) {
+        const m = k.match(/^([\w.:-]+)\/([\w.:-]+)\/(full|thumb)$/);
+        if (!m || typeof v !== "string") continue;
+        try {
+          const j = await api("PUT", `restore-photo/${encodeURIComponent(m[1])}/${encodeURIComponent(m[2])}/${m[3]}`, { data: v });
+          if (j.added && m[3] === "full") msg("restore-msg", `Restoring photos… ${++photosAdded}`);
+        } catch (e) { /* a photo the file's bins don't list, or a damaged one: skip it */ }
+      }
       const parts = [`${r.added} new label${r.added === 1 ? "" : "s"}`, `${r.updated} updated`];
       if (r.binsAdded) parts.push(`${r.binsAdded} bin${r.binsAdded === 1 ? "" : "s"}`);
-      if (r.photosAdded) parts.push(`${r.photosAdded} photo${r.photosAdded === 1 ? "" : "s"}`);
+      if (photosAdded) parts.push(`${photosAdded} photo${photosAdded === 1 ? "" : "s"}`);
       msg("restore-msg", "Restored: " + parts.join(", ") + ".", "ok");
       stats();
     } catch (e) { msg("restore-msg", "Couldn't restore (" + e.message + ").", "err"); }

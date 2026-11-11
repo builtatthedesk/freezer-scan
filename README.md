@@ -109,8 +109,8 @@ phone and never needs the internet after the first visit. A service worker
 node offline/build.mjs      # -> dist-offline/
 ```
 
-Host `dist-offline/` at the **root** of any static https site (Netlify, GitHub
-Pages with a custom domain, ...); no functions or keys. On the phone: open it once
+Host `dist-offline/` on any static https site, at its root or in a sub-folder
+(Netlify, GitHub Pages, ...); no functions or keys. On the phone: open it once
 in Chrome, then **Install app** / **Add to Home screen**.
 
 - Scanning, the list, label making (plain paper, Brother roll or 23 mm squares),
@@ -118,7 +118,7 @@ in Chrome, then **Install app** / **Add to Home screen**.
 - **Share & back up** (`offline/share.html`):
   - **Share the list** sends a single web page with the list built in, dated, read-only: it opens in any browser and says how old it is.
   - **Back up** saves one JSON file with everything, photos included.
-  - **Restore** merges a backup in: nothing is deleted, the newest scan of each label wins, and doing it twice changes nothing.
+  - **Restore** merges a backup in: nothing is deleted, the most recent change to each label wins, and doing it twice changes nothing.
 - Not in this edition: the live family list (send a copy instead), photo → label
   suggestions (need the internet), and one-tap printing. Print through Brother's
   iPrint&Label app over Bluetooth or the printer's Wi-Fi Direct, using **Save images**.

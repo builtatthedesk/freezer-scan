@@ -26,13 +26,24 @@
   }
   // The first visit has no server yet: hide the page, install it, then reload once so
   // every /api call goes to the phone. Later visits are controlled from the start.
+  // A load that skipped it (shift-reload) is reloaded once, so it is controlled too.
+  let cover = null;
   if (!navigator.serviceWorker.controller) {
-    document.documentElement.style.visibility = "hidden";
+    cover = document.createElement("style");
+    cover.textContent = 'body{visibility:hidden}html::before{content:"Setting up Freezer Scan on this phone…";display:block;padding:24px;font:600 18px system-ui,sans-serif}';
+    document.head.appendChild(cover);
     navigator.serviceWorker.addEventListener("controllerchange", () => location.reload());
-    setTimeout(() => { document.documentElement.style.visibility = ""; }, 8000);   // never leave a blank page
-  }
+    navigator.serviceWorker.getRegistration().then((r) => {
+      if (r && r.active && !sessionStorage.getItem("fo.reloaded")) { sessionStorage.setItem("fo.reloaded", "1"); location.reload(); }
+    }).catch(() => {});
+    setTimeout(() => {                                // never leave the page covered
+      if (navigator.serviceWorker.controller || !cover) return;
+      cover.remove();
+      bar("Still setting up the list on this phone. Wait a moment, then reload.");
+    }, 10000);
+  } else { try { sessionStorage.removeItem("fo.reloaded"); } catch (e) {} }
   navigator.serviceWorker.register("sw.js").catch((e) => {
-    document.documentElement.style.visibility = "";
+    if (cover) cover.remove();
     document.addEventListener("DOMContentLoaded", () => bar("Couldn't set up the list on this phone (" + e.message + "). Open it over https or from localhost."));
   });
   // Ask Android to keep the list even when the phone runs low on space.
