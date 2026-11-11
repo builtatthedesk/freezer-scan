@@ -64,6 +64,10 @@
       a.href = "share.html"; a.textContent = "Share & back up";
       share.replaceWith(a);
     }
+    // "Print the list" on the website builds an address from the site root, which is
+    // wrong when the app lives in a sub-folder (GitHub Pages).
+    const print = document.getElementById("print-link");
+    if (print) { const a = print.cloneNode(true); a.href = "list.html#k=local&print"; print.replaceWith(a); }
     // Nudge towards a backup: the list only lives on this phone.
     const last = Date.parse(LS.get("fo.backupAt") || "");
     const page = location.pathname.split("/").pop() || "index.html";
