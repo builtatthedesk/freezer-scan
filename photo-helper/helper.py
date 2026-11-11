@@ -96,6 +96,74 @@ def printer_addr(printer: str = ""):
     return (m.group(1), int(m.group(2) or 9100)) if m else None
 
 
+# The roll a Brother QL has loaded, over SNMP (Printer-MIB prtInputMediaName, community
+# "public"): e.g. '23mm x 23mm / 0.9" x 0.9"'. Port 9100 on the QL-8xx can't report it.
+MEDIA_OID = "1.3.6.1.2.1.43.8.2.1.12.1.1"
+
+
+def _tlv(tag: int, val: bytes) -> bytes:
+    n = len(val)
+    ln = bytes([n]) if n < 128 else bytes([0x81, n]) if n < 256 else bytes([0x82, n >> 8, n & 255])
+    return bytes([tag]) + ln + val
+
+
+def _read_tlv(d: bytes, i: int):
+    tag, ln, i = d[i], d[i + 1], i + 2
+    if ln & 0x80:
+        k = ln & 0x7F
+        ln, i = int.from_bytes(d[i:i + k], "big"), i + k
+    return tag, d[i:i + ln], i + ln
+
+
+def snmp_get(host: str, oid: str, timeout=2.0) -> bytes | None:
+    """One SNMPv1 GET; the value's bytes, or None on any failure."""
+    parts = [int(x) for x in oid.split(".")]
+    ob = bytes([40 * parts[0] + parts[1]])
+    for x in parts[2:]:
+        r = [x & 127]
+        x >>= 7
+        while x:
+            r.append((x & 127) | 128)
+            x >>= 7
+        ob += bytes(reversed(r))
+    vb = _tlv(0x30, _tlv(0x30, _tlv(6, ob) + bytes([5, 0])))
+    pdu = _tlv(0xA0, _tlv(2, bytes([1])) + _tlv(2, bytes([0])) + _tlv(2, bytes([0])) + vb)
+    msg = _tlv(0x30, _tlv(2, bytes([0])) + _tlv(4, b"public") + pdu)
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(timeout)
+            s.sendto(msg, (host, 161))
+            d = s.recv(4096)
+        _, m, _ = _read_tlv(d, 0)
+        _, _, i = _read_tlv(m, 0)                 # version
+        _, _, i = _read_tlv(m, i)                 # community
+        _, pdu, _ = _read_tlv(m, i)
+        _, _, j = _read_tlv(pdu, 0)               # request id
+        _, err, j = _read_tlv(pdu, j)             # error status
+        if any(err):
+            return None
+        _, _, j = _read_tlv(pdu, j)               # error index
+        _, vbl, _ = _read_tlv(pdu, j)
+        _, vb1, _ = _read_tlv(vbl, 0)
+        _, _, k = _read_tlv(vb1, 0)               # oid
+        tag, val, _ = _read_tlv(vb1, k)
+        return val if tag == 4 else None
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def loaded_roll(printer: str) -> str | None:
+    """The loaded roll as a label-print size ("29x90", "23x23", "62"), or None if unknown."""
+    addr = printer_addr(printer)
+    raw = (snmp_get(addr[0], MEDIA_OID) or snmp_get(addr[0], MEDIA_OID)) if addr else None
+    m = re.match(r"\s*(\d+)\s*mm(?:\s*x\s*(\d+)\s*mm)?\s*(?:/|$)", raw.decode("latin-1")) if raw else None
+    return (m.group(1) + ("x" + m.group(2) if m.group(2) else "")) if m else None
+
+
+def roll_words(size: str) -> str:
+    return {"23x23": "23 mm squares", "29x90": "long 29 × 90 mm labels"}.get(size, size + " mm labels")
+
+
 def poke(addr, timeout=3.0) -> bool:
     """Open and close a connection to the print port: wakes it, sends nothing."""
     try:
@@ -358,6 +426,19 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(400, {"error": "This computer doesn't know that printer."})
         if size and (not isinstance(size, str) or size not in LABEL_SIZES):
             return self.reply(400, {"error": "This computer doesn't know that label size."})
+        # Wrong roll in: the printer takes the job, shows an error and prints nothing, so ask
+        # it first. If it doesn't answer (asleep, no SNMP), print anyway as before.
+        if size:
+            addr = printer_addr(printer)      # the Wi-Fi printers doze; SNMP needs them awake
+            if addr and not wake(addr):
+                log(f"print failed on {printer}: not answering")
+                return self.reply(502, {"error": f"The {printer} didn't take it. Is it on? Try again."})
+            loaded = loaded_roll(printer)
+            if loaded and loaded != size:
+                log(f"print refused on {printer}: wants {size}, {loaded} loaded")
+                where = re.sub(r" ?QL-\S+$", "", printer)
+                return self.reply(409, {"error": f"The {where} printer has {roll_words(loaded)} in, not "
+                                                 f"{roll_words(size)}. Change the roll" + (", or use the other printer." if len(PRINTERS) > 1 else ".")})
         with PRINT_LOCK:
             try:
                 print_label(png, printer, size)
