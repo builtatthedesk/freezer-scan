@@ -155,10 +155,8 @@ def snmp_get(host: str, oid: str, timeout=2.0) -> bytes | None:
 def loaded_roll(printer: str) -> str | None:
     """The loaded roll as a label-print size ("29x90", "23x23", "62"), or None if unknown."""
     addr = printer_addr(printer)
-    if not addr or not wake(addr):      # the Wi-Fi printers doze; SNMP needs them awake
-        return None
-    raw = snmp_get(addr[0], MEDIA_OID) or snmp_get(addr[0], MEDIA_OID)
-    m = re.match(r"\s*(\d+)mm(?: x (\d+)mm)?", raw.decode("latin-1")) if raw else None
+    raw = (snmp_get(addr[0], MEDIA_OID) or snmp_get(addr[0], MEDIA_OID)) if addr else None
+    m = re.match(r"\s*(\d+)\s*mm(?:\s*x\s*(\d+)\s*mm)?\s*(?:/|$)", raw.decode("latin-1")) if raw else None
     return (m.group(1) + ("x" + m.group(2) if m.group(2) else "")) if m else None
 
 
@@ -431,12 +429,16 @@ class Handler(BaseHTTPRequestHandler):
         # Wrong roll in: the printer takes the job, shows an error and prints nothing, so ask
         # it first. If it doesn't answer (asleep, no SNMP), print anyway as before.
         if size:
+            addr = printer_addr(printer)      # the Wi-Fi printers doze; SNMP needs them awake
+            if addr and not wake(addr):
+                log(f"print failed on {printer}: not answering")
+                return self.reply(502, {"error": f"The {printer} didn't take it. Is it on? Try again."})
             loaded = loaded_roll(printer)
             if loaded and loaded != size:
                 log(f"print refused on {printer}: wants {size}, {loaded} loaded")
                 where = re.sub(r" ?QL-\S+$", "", printer)
                 return self.reply(409, {"error": f"The {where} printer has {roll_words(loaded)} in, not "
-                                                 f"{roll_words(size)}. Change the roll, or use the other printer."})
+                                                 f"{roll_words(size)}. Change the roll" + (", or use the other printer." if len(PRINTERS) > 1 else ".")})
         with PRINT_LOCK:
             try:
                 print_label(png, printer, size)
