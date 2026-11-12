@@ -122,7 +122,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
 <div class="wrap">
   <header class="top">
     <h1>Freezer Scan</h1>
-    <p>Scan a freezer's label, then the food going in. <a id="labels-link" href="label.html" hidden>Make labels</a> <span id="bins-wrap" hidden>· <a id="bins-link" href="bins.html">Storage bins</a></span> <span id="share-wrap" hidden>· <a id="share-link" href="#">Send the family list</a></span> <span id="print-wrap" hidden>· <a id="print-link" href="#">Print the list</a></span></p>
+    <p>Scan a freezer's label, then the food going in. <a id="labels-link" href="label.html" hidden>Make labels</a> <span id="bins-wrap" hidden>· <a id="bins-link" href="bins.html">Storage bins</a></span> <span id="share-wrap" hidden>· <a id="share-link" href="#">Send the family list</a></span> <span id="print-wrap" hidden>· <a id="print-link" href="#">Print the list</a></span> <span id="backup-wrap" hidden>· <a id="backup-link" href="backup.html">Back up</a></span></p>
     <p id="moved" hidden style="background:#fff3cd;color:#664d03;border-radius:10px;padding:10px 12px;font-weight:600">This list has moved to <a href="https://freezer-scan.netlify.app/">freezer-scan.netlify.app</a>. Scan there from now on; scans here are not seen by the family list.</p>
   </header>
 
@@ -971,7 +971,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     location.href = url + "&print";
   });
   if (!window.claude) { $("bins-wrap").hidden = false; if (location.hash) $("bins-link").href = "bins.html" + location.hash; }
-  if (!window.claude) { $("share-wrap").hidden = false; $("print-wrap").hidden = false; $("labels-link").hidden = false; if (location.hash) $("labels-link").href = "label.html" + location.hash; }
+  if (!window.claude) { $("share-wrap").hidden = false; $("print-wrap").hidden = false; $("backup-wrap").hidden = false; $("labels-link").hidden = false; if (location.hash) $("backup-link").href = "backup.html" + location.hash; if (location.hash) $("labels-link").href = "label.html" + location.hash; }
   if (window.claude) $("moved").hidden = false;
   (async () => {
     const loading = setTimeout(() => { $("sync").textContent = "Can't reach your list yet. Scans will show here but may not save."; }, 10000);

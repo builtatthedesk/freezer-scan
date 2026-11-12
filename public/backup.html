@@ -40,20 +40,20 @@
     <h2>📤 Share the list</h2>
     <p>Sends a copy of what's in your freezers, dated today. They open it on their phone, no app needed. It's a copy, so it won't change when you scan; send a new one when they need it.</p>
     <button type="button" id="share">Share the list</button>
-    <a class="btn alt" href="list.html#k=local&amp;print">Print the list</a>
+    <a class="btn alt" id="print" href="list.html#print">Print the list</a>
     <p class="msg" id="share-msg" role="status"></p>
   </div>
 
   <div class="card">
     <h2>💾 Back up</h2>
-    <p>Your list lives only on this phone. A backup is one file with everything (food, bins, photos). Save it to Google Drive, email it to yourself, or send it to another phone.</p>
+    <p><span class="phone-only">Your list lives only on this phone. </span>A backup is one file with everything (food, bins, photos). Save it to Google Drive, email it to yourself, or open it on another copy of Freezer Scan: the website, a home server, or a phone.</p>
     <button type="button" id="backup">Back up now</button>
     <p class="msg" id="backup-msg" role="status"></p>
   </div>
 
   <div class="card">
     <h2>♻️ Restore a backup</h2>
-    <p>Pick a backup file. It's added to what's here: nothing on this phone is deleted, and for each label the most recent change wins.</p>
+    <p>Pick a backup file from any copy of Freezer Scan. It's added to what's here: nothing here is deleted, and for each label the most recent change wins.</p>
     <button type="button" class="alt" id="restore">Choose backup file</button>
     <input type="file" id="restore-file" accept=".json,application/json,text/plain" hidden>
     <p class="msg" id="restore-msg" role="status"></p>
@@ -68,9 +68,19 @@
   const LS = { get(k){ try { return localStorage.getItem(k); } catch (e) { return null; } },
                set(k,v){ try { localStorage.setItem(k,v); } catch (e) {} } };
   const msg = (id, t, kind) => { const m = $(id); m.textContent = t; m.className = "msg" + (kind ? " " + kind : ""); };
+  // Same page on the website and the offline edition. The website needs the scanning
+  // key (#w=..., kept on this phone by the scanning page); the offline edition's
+  // stand-in key is "local".
+  const OFFLINE = !!window.FREEZER_OFFLINE;
+  const hk = (location.hash.match(/[#&]w=([\w-]+)/) || [])[1];
+  if (hk && hk !== "demo") LS.set("fs.key", hk);
+  const KEY = hk || LS.get("fs.key") || "";
+  if (!OFFLINE) for (const e of document.querySelectorAll(".phone-only")) e.hidden = true;
+  if (location.hash) for (const a of document.querySelectorAll('a[href="./"]')) a.href = "./" + location.hash;
   const stamp = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
   async function api(method, path, body){
-    const r = await fetch("/api/" + path, { method, cache: "no-store", headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    if (!KEY) throw new Error("open this page from the scanning page, so it has your scanning link");
+    const r = await fetch("api/" + path, { method, cache: "no-store", headers: { "x-key": KEY, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
     return j;
@@ -87,6 +97,8 @@
     } catch (e) { $("stats").textContent = "Couldn't read the list (" + e.message + ")."; }
   }
   stats();
+  // The printable list opens with the family-list key (the offline edition's is "local").
+  api("GET", "share").then(({ readKey }) => { $("print").href = "list.html#k=" + encodeURIComponent(readKey) + "&print"; }).catch(() => {});
 
   // Hand a file to the share sheet (Quick Share, Drive, email, messages...), or
   // save it to Downloads where sharing files isn't possible.
@@ -168,7 +180,7 @@ document.getElementById("q").addEventListener("input",draw);draw();
       for (const [bin, b] of Object.entries(data.bins))
         for (const ph of b.photos || [])
           for (const size of ["full", "thumb"]) {
-            const r = await fetch(`/api/photo/${encodeURIComponent(bin)}/${encodeURIComponent(ph.id)}?size=${size}`);
+            const r = await fetch(`api/photo/${encodeURIComponent(bin)}/${encodeURIComponent(ph.id)}?size=${size}`, { headers: { "x-key": KEY } });
             if (!r.ok) continue;
             parts.push((first ? "" : ",") + JSON.stringify(`${bin}/${ph.id}/${size}`) + ':"', await dataUrl(await r.blob()), '"');
             first = false;
@@ -197,7 +209,7 @@ document.getElementById("q").addEventListener("input",draw);draw();
     try {
       let data;
       try { data = JSON.parse(await f.text()); } catch (e) { throw new Error("that file isn't a Freezer Scan backup"); }
-      if (data && data.kind === "backup" && data.at && !confirm(`Add the backup from ${new Date(data.at).toLocaleString()} to this phone's list?`)) return msg("restore-msg", "");
+      if (data && data.kind === "backup" && data.at && !confirm(`Add the backup from ${new Date(data.at).toLocaleString()} to ${OFFLINE ? "this phone's" : "this"} list?`)) return msg("restore-msg", "");
       const photos = data && typeof data.photos === "object" && data.photos ? data.photos : {};
       const r = await api("POST", "restore", Object.assign({}, data, { photos: undefined }));
       // Photos go in one at a time; any this phone already has are skipped.
@@ -222,7 +234,7 @@ document.getElementById("q").addEventListener("input",draw);draw();
   let installEvt = null;
   window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; $("install-card").hidden = false; });
   $("install").addEventListener("click", async () => { if (!installEvt) return; installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; $("install-card").hidden = true; });
-  if (navigator.storage && navigator.storage.persisted) navigator.storage.persisted().then(p => {
+  if (OFFLINE && navigator.storage && navigator.storage.persisted) navigator.storage.persisted().then(p => {
     $("storage").textContent = p ? "This phone keeps the list even when space runs low." : "Tip: install it on the home screen so the phone keeps the list safe when space runs low.";
   }).catch(() => {});
 })();

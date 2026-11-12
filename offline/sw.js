@@ -7,7 +7,7 @@
 // Same routes as netlify/functions/api.mjs, minus keys (one phone, one owner),
 // plus two of its own for the Share & back up page:
 //   GET  /api/backup             everything except photo data, as one JSON object
-//                                (the page adds the photos one by one; see share.html)
+//                                (the page adds the photos one by one; see public/backup.html)
 //   POST /api/restore            merge a backup's labels, bins and counters in
 //   PUT  /api/restore-photo/:bin/:pid/:size   one photo from a backup, if missing here
 // Every saved item gets a "modAt" stamp, so a restore can tell which copy of a label
@@ -113,8 +113,9 @@ const photoKeys = (bin, pid) => [`${bin}/${pid}/full`, `${bin}/${pid}/thumb`];
 const dropPhotos = (bin, pids) => tx("photos", "readwrite", (t) => { for (const pid of pids) for (const k of photoKeys(bin, pid)) t.objectStore("photos").delete(k); });
 // Today on this phone's clock, as the server would date a label ID.
 function localDay(){ const d = new Date(); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); }
-// Label IDs count from 5001, like the website, so they never meet the desktop tool's 001, 002...
-const WEB_ID_START = 5001;
+// Label IDs count from 7001: the desktop tool uses 001, 002..., the website 5001...,
+// so a backup moved between the website and a phone never mixes up two labels.
+const PHONE_ID_START = 7001;
 
 // ------------------------------------------------------------------ the API
 async function api(req, url, rest){
@@ -196,7 +197,7 @@ async function api(req, url, rest){
     const n = Math.max(1, Math.min(50, Number(((await readJson(req)) || {}).n) || 1));
     const today = localDay(), day = today.slice(2).replace(/-/g, "");
     let first = 0;
-    await kvUpdate("ids", (c) => { first = c[day] || WEB_ID_START; c[day] = first + n; });
+    await kvUpdate("ids", (c) => { first = Math.max(c[day] || 0, PHONE_ID_START); c[day] = first + n; });
     return json(200, { ids: Array.from({ length: n }, (_, k) => day + "-" + (first + k)), date: today });
   }
 
@@ -287,7 +288,8 @@ async function restore(b){
       bins[id] = merged;
     }
   });
-  // Label counters never go backwards, so new labels can't reuse a restored ID.
-  await kvUpdate("ids", (c) => { for (const [d, n] of Object.entries(b.ids || {})) if (/^\d{6}$/.test(d) && Number(n) > (c[d] || 0)) c[d] = Number(n); });
+  // Label counters never go backwards, so new labels can't reuse a restored ID. Only
+  // phone counters (7001 up) count: the website's (5001 up) never meet this phone's.
+  await kvUpdate("ids", (c) => { for (const [d, n] of Object.entries(b.ids || {})) if (/^\d{6}$/.test(d) && Number(n) > PHONE_ID_START && Number(n) > (c[d] || 0)) c[d] = Number(n); });
   return { ok: true, added, updated, binsAdded };
 }

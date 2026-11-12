@@ -16,6 +16,10 @@
 //   POST   /api/bins/:id/photos          write key, body { full, thumb } as JPEG data URLs
 //   DELETE /api/bins/:id/photos/:pid     write key
 //   GET    /api/photo/:id/:pid?size=thumb|full   read key -> image/jpeg
+// Backup (public/backup.html; same file format as the offline edition):
+//   GET    /api/backup                   write key -> everything except photo data
+//   POST   /api/restore                  write key, body = a backup, merged in (see restore())
+//   PUT    /api/restore-photo/:bin/:pid/full|thumb   write key, body { data } JPEG data URL, if missing here
 // Keys come from the READ_KEY / WRITE_KEY env vars and arrive in the x-key header.
 // With DEMO=1 the key "demo" opens a separate sample list anyone may scan into;
 // it is reset to the sample food whenever it is more than a day old.
@@ -82,7 +86,7 @@ function keyProblem(){
 
 // Web-made label IDs count from 5001 so they never meet the desktop label
 // tool's own daily counter (001, 002, ...).
-const WEB_ID_START = 5001;
+const WEB_ID_START = 5001, PHONE_ID_START = 7001;   // the offline edition numbers from 7001
 
 function demoItems(){
   const day = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
@@ -131,6 +135,74 @@ async function readItems(store, demo){
   return items;
 }
 
+// ---------------------------------------------------------------- backup / restore
+// Same file and same merge as the offline edition (offline/sw.js), so a backup moves
+// freely between the website, a self-hosted copy and a phone: nothing is deleted, each
+// label keeps whichever copy was changed last (modAt, else its last scan; on a tie the
+// copy already here stays), bins keep the newest edit and gain missing photos, and
+// label counters never go backwards. Everything is checked before anything is saved.
+function cleanBin(bin){
+  if (!bin || typeof bin !== "object" || typeof bin.name !== "string") return null;
+  const name = bin.name.replace(/\s+/g, " ").trim();
+  if (!name || name.length > 80) return null;
+  const str = (v) => typeof v === "string" ? v.slice(0, 40) : undefined;
+  const photos = (Array.isArray(bin.photos) ? bin.photos : [])
+    .filter(p => p && typeof p === "object" && ID_RE.test(p.id || ""))
+    .map(p => ({ id: p.id, at: str(p.at) || "" })).slice(0, MAX_PHOTOS);
+  return { name, notes: typeof bin.notes === "string" ? bin.notes.slice(0, 2000) : "", photos,
+           createdAt: str(bin.createdAt) || "", updatedAt: str(bin.updatedAt) || "" };
+}
+const stampOf = (it) => String((it && (it.modAt || it.lastScan)) || "");
+async function restore(store, b){
+  const inItems = [], inBins = [];
+  for (const [id, raw] of Object.entries(b.items)) {
+    const it = ID_RE.test(id) && cleanItem(raw);
+    if (!it) continue;
+    if (typeof raw.modAt === "string" && raw.modAt.length <= 40) it.modAt = raw.modAt;
+    inItems.push([id, it]);
+  }
+  for (const [id, raw] of Object.entries(b.bins && typeof b.bins === "object" ? b.bins : {})) {
+    const bin = ID_RE.test(id) && cleanBin(raw);
+    if (bin) inBins.push([id, bin]);
+  }
+  let added = 0, updated = 0, binsAdded = 0;
+  let stop = await updateJson(store, "items", (items) => {
+    added = updated = 0;                                   // counted again if the write is retried
+    for (const [id, it] of inItems) {
+      if (!items[id]) { items[id] = it; added++; }
+      else if (stampOf(it) > stampOf(items[id])) { items[id] = it; updated++; }
+    }
+  });
+  if (stop) return stop;
+  stop = await updateJson(store, "bins", (bins) => {
+    binsAdded = 0;
+    for (const [id, bin] of inBins) {
+      const have = bins[id];
+      if (!have) { binsAdded++; bins[id] = bin; continue; }
+      const merged = Object.assign({}, String(bin.updatedAt) > String(have.updatedAt || "") ? bin : have);
+      const ids = new Set((have.photos || []).map(p => p.id));
+      merged.photos = (have.photos || []).concat(bin.photos.filter(p => !ids.has(p.id))).slice(0, MAX_PHOTOS);
+      bins[id] = merged;
+    }
+  });
+  if (stop) return stop;
+  // Only website counters (5001 up, below the offline edition's 7001) count: a phone's
+  // label numbers never meet the website's, so its counters don't belong here.
+  const days = Object.entries(b.ids && typeof b.ids === "object" ? b.ids : {})
+    .filter(([day, n]) => /^\d{6}$/.test(day) && Number(n) > WEB_ID_START && Number(n) <= PHONE_ID_START);
+  const ok = await Promise.all(days.map(async ([day, n]) => {
+    for (let i = 0; i < 8; i++) {
+      const cur = await store.getWithMetadata("ids/" + day, { type: "json" });
+      if (cur && cur.data && cur.data.next >= Number(n)) return true;
+      const res = await store.setJSON("ids/" + day, { next: Number(n) }, cur ? { onlyIfMatch: cur.etag } : { onlyIfNew: true });
+      if (res.modified) return true;
+    }
+    return false;
+  }));
+  if (ok.includes(false)) return json(409, { error: "busy, try again" });
+  return json(200, { ok: true, added, updated, binsAdded });
+}
+
 export default async (req) => {
   const key = req.headers.get("x-key") || "";
   const problem = keyProblem();
@@ -171,6 +243,7 @@ export default async (req) => {
       const cur = await store.getWithMetadata("items", { type: "json" });
       const items = (cur && cur.data) || {};
       if (body) {
+        body.modAt = new Date().toISOString();   // lets a restore tell which copy changed last
         if (demo && !items[id] && Object.keys(items).length >= 200) return json(400, { error: "The demo list is full." });
         items[id] = body;
       } else delete items[id];
@@ -267,6 +340,34 @@ export default async (req) => {
       if (res.modified) return json(200, { ids: Array.from({ length: n }, (_, k) => day + "-" + (next + k)), date: today });
     }
     return json(409, { error: "busy, try again" });
+  }
+
+  if (req.method === "GET" && path[0] === "backup" && !path[1]) {
+    const [items, bins, { blobs }] = await Promise.all([readItems(store, demo), readBins(store, demo), store.list({ prefix: "ids/" })]);
+    const ids = {};
+    await Promise.all(blobs.map(async (b) => {
+      const day = b.key.slice(4), c = /^\d{6}$/.test(day) && await store.get(b.key, { type: "json" });
+      if (c && Number(c.next) > 0) ids[day] = Number(c.next);
+    }));
+    return json(200, { app: "freezer-scan", kind: "backup", version: 1, at: new Date().toISOString(), items, bins, ids });
+  }
+  if (req.method === "POST" && path[0] === "restore" && !path[1]) {
+    if (demo) return json(403, { error: "Restoring is turned off in the demo." });
+    const b = await readJson(req);
+    if (!b || b.app !== "freezer-scan" || !b.items || typeof b.items !== "object")
+      return json(400, { error: "That file isn't a Freezer Scan backup." });
+    return restore(store, b);
+  }
+  if (req.method === "PUT" && path[0] === "restore-photo" && ID_RE.test(path[1] || "") && ID_RE.test(path[2] || "") && (path[3] === "full" || path[3] === "thumb") && !path[4]) {
+    if (demo) return json(403, { error: "Restoring is turned off in the demo." });
+    const bins = await readBins(store, demo);
+    if (!((bins[path[1]] || {}).photos || []).some(p => p.id === path[2])) return json(404, { error: "no such photo in this bin" });
+    const buf = jpegFrom(((await readJson(req)) || {}).data, path[3] === "full" ? MAX_PHOTO_BYTES : MAX_THUMB_BYTES);
+    if (!buf) return json(400, { error: "bad photo" });
+    const k = `photo/${path[1]}/${path[2]}/${path[3]}`;
+    if (await store.get(k, { type: "arrayBuffer" })) return json(200, { ok: true, added: false });
+    await store.set(k, buf);
+    return json(200, { ok: true, added: true });
   }
 
   if (req.method === "POST" && path[0] === "log") {
