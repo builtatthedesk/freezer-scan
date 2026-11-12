@@ -144,7 +144,7 @@ async function api(req, url, rest){
     if (body) body.modAt = now;
     let old = null;
     await kvUpdate("items", (items) => { old = items[path[1]] || null; if (body) items[path[1]] = body; else delete items[path[1]]; });
-    await addHistory(historyEvents(path[1], old, body, now)).catch(() => {});   // the list is saved either way
+    await addHistory(historyEvents(path[1], old, body, now)).catch(() => 0);   // the list is saved either way
     return json(200, { ok: true });
   }
 
@@ -303,8 +303,8 @@ async function restore(b){
   // phone counters (7001 up) count: the website's (5001 up) never meet this phone's.
   await kvUpdate("ids", (c) => { for (const [d, n] of Object.entries(b.ids || {})) if (/^\d{6}$/.test(d) && Number(n) > PHONE_ID_START && Number(n) > (c[d] || 0)) c[d] = Number(n); });
   const events = cleanHistory(b.history);
-  if (events.length) await addHistory(events);           // duplicates are skipped
-  return { ok: true, added, updated, binsAdded, history: events.length };
+  const history = events.length ? await addHistory(events) : 0;    // duplicates are skipped
+  return { ok: true, added, updated, binsAdded, history };
 }
 
 // ------------------------------------------------------------------ history
@@ -326,27 +326,32 @@ function monthOf(iso){ const d = new Date(iso); return new Date(d - d.getTimezon
 async function addHistory(events){
   const byMonth = {};
   for (const e of events) (byMonth[monthOf(e.at)] = byMonth[monthOf(e.at)] || []).push(e);
+  let added = 0;
   for (const [m, list] of Object.entries(byMonth))
     await kvUpdate("history/" + m, (h) => {
       const have = new Set((h.events || []).map(e => e.at + "|" + e.id + "|" + e.action));
-      h.events = (h.events || []).concat(list.filter(e => !have.has(e.at + "|" + e.id + "|" + e.action)));
+      const fresh = list.filter(e => { const k = e.at + "|" + e.id + "|" + e.action; return !have.has(k) && have.add(k); });
+      added += fresh.length;
+      h.events = (h.events || []).concat(fresh);
     });
+  return added;
 }
 async function readHistory(){
   const range = IDBKeyRange.bound("history/", "history/\uffff");
   const [keys, vals] = await tx("kv", "readonly", t => Promise.all([done(t.objectStore("kv").getAllKeys(range)), done(t.objectStore("kv").getAll(range))]));
   const months = keys.map(k => k.slice(8));
-  const events = vals.flatMap(v => (v && v.events) || []).sort((a, b) => a.at < b.at ? 1 : a.at > b.at ? -1 : 0);
+  const events = vals.flatMap((v, i) => ((v && v.events) || []).map(e => Object.assign({ m: months[i] }, e))).sort((a, b) => a.at < b.at ? 1 : a.at > b.at ? -1 : 0);
   return { months, events };
 }
 const HIST_FIELDS = ["at", "id", "text", "action", "shelf", "from", "to", "device"];
 function cleanHistory(list){
   if (!Array.isArray(list)) return [];
   return list.slice(0, 100000).flatMap((e) => {
-    if (!e || typeof e !== "object" || !ID_RE.test(e.id || "") || isNaN(Date.parse(e.at))) return [];
-    if (!["in", "out", "moved", "renamed", "edited", "deleted"].includes(e.action)) return [];
+    if (!e || typeof e !== "object" || !ID_RE.test(e.id || "") || typeof e.at !== "string" || isNaN(Date.parse(e.at))) return [];
+    if (!["in", "out", "moved", "renamed", "edited", "deleted"].includes(e.action) || typeof e.text !== "string") return [];
     const out = {};
     for (const k of HIST_FIELDS) if (typeof e[k] === "string") out[k] = e[k].slice(0, 200);
+    out.at = new Date(e.at).toISOString();
     return [out];
   });
 }

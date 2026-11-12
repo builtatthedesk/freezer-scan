@@ -133,7 +133,8 @@
   for (const id of ["q", "freezer", "action", "from", "to"]) $(id).addEventListener("input", draw);
 
   $("csv").addEventListener("click", () => {
-    const cell = (v) => /[",\n]/.test(v = String(v ?? "")) ? '"' + v.replace(/"/g, '""') + '"' : v;
+    // Quote what needs quoting, and stop a spreadsheet from running text that looks like a formula.
+    const cell = (v) => { v = String(v ?? ""); if (/^[=+\-@\t\r]/.test(v)) v = "'" + v; return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
     const rows = [["date", "time", "what", "food", "label id", "freezer", "from", "to", "phone"]]
       .concat(shown().map(e => [localDay(e.at), time(e.at), WORD[e.action] || e.action, e.text, e.id, e.shelf, e.from, e.to, e.device]));
     const blob = new Blob([rows.map(r => r.map(cell).join(",")).join("\r\n")], { type: "text/csv" });
@@ -159,7 +160,7 @@
   }
   $("clear").addEventListener("click", async () => {
     const m = $("before").value; if (!m) return;
-    const n = events.filter(e => localDay(e.at).slice(0, 7) < m).length;
+    const n = events.filter(e => (e.m || localDay(e.at).slice(0, 7)) < m).length;
     if (!confirm(`Delete ${n} recorded change${n === 1 ? "" : "s"} from before ${$("before").selectedOptions[0].text.replace("Everything before ", "")}? This can't be undone.`)) return;
     try {
       const j = await api("DELETE", "history?before=" + encodeURIComponent(m));
