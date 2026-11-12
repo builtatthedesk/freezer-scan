@@ -61,8 +61,9 @@
     const share = document.getElementById("share-link");
     if (share) {
       const a = share.cloneNode(true);                  // drops the website's click handler
-      a.href = "share.html"; a.textContent = "Share & back up";
+      a.href = "backup.html"; a.textContent = "Share & back up";
       share.replaceWith(a);
+      const bw = document.getElementById("backup-wrap"); if (bw) bw.remove();   // the link above goes there already
     }
     // "Print the list" on the website builds an address from the site root, which is
     // wrong when the app lives in a sub-folder (GitHub Pages).
@@ -73,8 +74,8 @@
     const page = location.pathname.split("/").pop() || "index.html";
     if (page === "index.html" || page === "list.html") {
       const daysSince = Number.isFinite(last) ? Math.floor((Date.now() - last) / 864e5) : null;
-      if (daysSince === null && LS.get("fo.used")) bar('Your list is only on this phone. <a href="share.html">Back it up</a> so a lost phone doesn\'t lose it.');
-      else if (daysSince !== null && daysSince >= 14) bar('Last backup ' + daysSince + ' days ago. <a href="share.html">Back up now</a>.');
+      if (daysSince === null && LS.get("fo.used")) bar('Your list is only on this phone. <a href="backup.html">Back it up</a> so a lost phone doesn\'t lose it.');
+      else if (daysSince !== null && daysSince >= 14) bar('Last backup ' + daysSince + ' days ago. <a href="backup.html">Back up now</a>.');
     }
     LS.set("fo.used", "1");
   });

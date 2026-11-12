@@ -16,7 +16,7 @@ const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", "
   ".css": "text/css", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg",
   ".svg": "image/svg+xml", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json", ".txt": "text/plain" };
 // The same headers netlify.toml sets.
-const PRIVATE = new Set(["/index.html", "/list.html", "/bins.html", "/label.html"]);
+const PRIVATE = new Set(["/index.html", "/list.html", "/bins.html", "/label.html", "/backup.html"]);
 const BASE = { "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
 
 async function readBody(req) {

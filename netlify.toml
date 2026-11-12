@@ -31,3 +31,8 @@
   for = "/label.html"
   [headers.values]
     X-Robots-Tag = "noindex, nofollow"
+
+[[headers]]
+  for = "/backup.html"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
