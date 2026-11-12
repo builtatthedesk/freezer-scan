@@ -98,6 +98,9 @@ netlify dev
 `Dockerfile` + [`selfhost/`](selfhost/README.md) run the same pages and API in one
 container, storing the list as files. Guides for a VPS (Caddy HTTPS) and a home
 server (Tailscale HTTPS) are in [selfhost/README.md](selfhost/README.md).
+`selfhost/nightly-backup.py <dir>` saves one backup file a night (same file as the
+Back up button, photos included, newest 30 kept); run it from cron or a systemd timer
+(on a VPS, pass the site's https address as the second argument).
 
 ## Offline edition (one phone, no server)
 
