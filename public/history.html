@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Freezer history</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>❄️</text></svg>">
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --muted:#59636e; --line:#d6dbe1; --accent:#1f6feb; --in:#1a7f37; --out:#9a6700; --err:#cf222e; color-scheme:light dark; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0e1116; --card:#161b22; --ink:#e6edf3; --muted:#9198a1; --line:#30363d; --accent:#58a6ff; --in:#3fb950; --out:#d29922; --err:#ff7b72; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width:720px; margin:0 auto; padding:16px; }
+  h1 { font-size:24px; margin:4px 0; }
+  .sub { color:var(--muted); margin:0 0 12px; font-size:15px; }
+  a { color:var(--accent); }
+  .filters { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:0 0 10px; }
+  .filters .wide { grid-column:1 / -1; }
+  input, select, button { font:inherit; padding:9px 11px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--ink); min-height:44px; width:100%; }
+  label.f { font-size:13px; color:var(--muted); display:block; }
+  button { background:var(--accent); color:#fff; border:0; font-weight:600; cursor:pointer; width:auto; }
+  button.alt { background:transparent; color:var(--accent); border:1px solid var(--line); }
+  .bar { display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin:0 0 6px; }
+  h2 { font-size:15px; color:var(--muted); margin:16px 0 6px; font-weight:600; }
+  ul { list-style:none; margin:0; padding:0; background:var(--card); border:1px solid var(--line); border-radius:12px; }
+  li { display:grid; grid-template-columns:52px 1fr; gap:4px 10px; padding:9px 14px; border-top:1px solid var(--line); }
+  li:first-child { border-top:0; }
+  .t { color:var(--muted); font-size:14px; font-variant-numeric:tabular-nums; }
+  .what b { font-weight:600; }
+  .act { display:inline-block; font-size:12px; font-weight:700; border-radius:6px; padding:1px 7px; margin-right:6px; color:#fff; background:var(--muted); }
+  .act.in { background:var(--in); } .act.out { background:var(--out); } .act.deleted { background:var(--err); }
+  .more { grid-column:2; color:var(--muted); font-size:13px; }
+  .empty { color:var(--muted); padding:16px; text-align:center; }
+  details.danger { margin:28px 0 8px; color:var(--muted); font-size:14px; }
+  details.danger summary { cursor:pointer; }
+  details.danger .box { margin-top:8px; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--card); }
+  details.danger button { background:var(--err); }
+  .msg { font-size:14px; margin:6px 0 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🕑 Freezer history</h1>
+  <p class="sub"><a id="back" href="./">Back to the list</a> · <span id="sub">Loading…</span></p>
+
+  <div class="filters">
+    <input id="q" class="wide" type="search" placeholder="Search a food" aria-label="Search a food">
+    <div><label class="f" for="freezer">Freezer</label><select id="freezer"><option value="">All freezers</option></select></div>
+    <div><label class="f" for="action">What happened</label><select id="action">
+      <option value="">Everything</option><option value="in">Went in</option><option value="out">Taken out</option>
+      <option value="moved">Moved freezer</option><option value="other">Renamed, date changed, deleted</option></select></div>
+    <div><label class="f" for="from">From</label><input id="from" type="date"></div>
+    <div><label class="f" for="to">To</label><input id="to" type="date"></div>
+  </div>
+  <div class="bar"><span class="sub" id="count" style="margin:0"></span><button type="button" class="alt" id="csv">Download CSV</button></div>
+  <div id="out"></div>
+
+  <!-- Out of the way on purpose: clearing history can't be undone. -->
+  <details class="danger" id="clear-wrap" hidden>
+    <summary>Clear old history</summary>
+    <div class="box">
+      <p style="margin:0 0 8px">Deletes every change recorded before the month you pick. The list itself isn't touched. This can't be undone, so <a id="backup-link" href="backup.html">back up</a> first if you might want it.</p>
+      <select id="before" aria-label="Clear everything before"></select>
+      <p style="margin:8px 0 0"><button type="button" id="clear">Clear</button></p>
+      <p class="msg" id="clear-msg" role="status"></p>
+    </div>
+  </details>
+</div>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const LS = { get(k){ try { return localStorage.getItem(k); } catch { return null; } },
+               set(k,v){ try { localStorage.setItem(k,v); } catch {} } };
+  // Same keys as the other pages: the scanning key (#w=) or the family key (#k=).
+  const hashKey = (location.hash.match(/[#&]([wk])=([\w-]+)/) || []);
+  if (hashKey[2] && hashKey[2] !== "demo") LS.set(hashKey[1] === "w" ? "fs.key" : "fl.key", hashKey[2]);
+  const key = hashKey[2] || LS.get("fs.key") || LS.get("fl.key");
+  const keyHash = hashKey[2] ? "#" + hashKey[1] + "=" + hashKey[2] : "";
+  $("back").href = (hashKey[1] === "k" || (!hashKey[2] && !LS.get("fs.key")) ? "list.html" : "./") + keyHash;
+  $("backup-link").href = "backup.html" + keyHash;
+
+  async function api(method, path){
+    const r = await fetch("/api/" + path, { method, cache: "no-store", headers: { "x-key": key } });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
+    return j;
+  }
+
+  const WORD = { in: "In", out: "Out", moved: "Moved", renamed: "Renamed", edited: "Date changed", deleted: "Deleted" };
+  const localDay = (iso) => { const d = new Date(iso); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
+  const dayTitle = (day) => new Date(day + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  const time = (iso) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  function el(tag, cls, text){ const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function detail(e){
+    if (e.action === "moved") return `${e.from || "no freezer"} → ${e.to || "no freezer"}`;
+    if (e.action === "renamed") return `was "${e.from}"`;
+    if (e.action === "edited") return `date ${e.from || "none"} → ${e.to || "none"}`;
+    return (e.shelf || "") + (e.from ? ` (from ${e.from})` : "");
+  }
+
+  let events = [], canWrite = false;
+  function shown(){
+    const q = $("q").value.trim().toLowerCase(), f = $("freezer").value, a = $("action").value;
+    const from = $("from").value, to = $("to").value;
+    return events.filter(e => {
+      if (q && !(e.text || "").toLowerCase().includes(q) && !(e.id || "").includes(q)) return false;
+      if (f && e.shelf !== f && e.from !== f && e.to !== f) return false;
+      if (a && (a === "other" ? ["in", "out", "moved"].includes(e.action) : e.action !== a)) return false;
+      const d = localDay(e.at);
+      return (!from || d >= from) && (!to || d <= to);
+    });
+  }
+  function draw(){
+    const list = shown(), out = $("out");
+    out.replaceChildren();
+    $("count").textContent = `${list.length} change${list.length === 1 ? "" : "s"}` + (list.length !== events.length ? ` of ${events.length}` : "");
+    if (!list.length) { out.append(el("div", "empty", events.length ? "Nothing matches." : "Nothing recorded yet. Every scan in or out from now on shows up here.")); return; }
+    let day = "", ul = null;
+    for (const e of list.slice(0, 2000)) {
+      const d = localDay(e.at);
+      if (d !== day) { day = d; out.append(el("h2", "", dayTitle(d))); ul = el("ul"); out.append(ul); }
+      const li = el("li"), what = el("div", "what");
+      what.append(el("span", "act " + e.action, WORD[e.action] || e.action), el("b", "", e.text || e.id));
+      li.append(el("span", "t", time(e.at)), what);
+      const more = [detail(e), e.id].filter(Boolean).join(" · ") + (e.device ? " · " + e.device : "");
+      li.append(el("div", "more", more));
+      ul.append(li);
+    }
+    if (list.length > 2000) out.append(el("p", "sub", "Showing the newest 2000. Narrow the dates, or download the CSV for all of it."));
+  }
+  for (const id of ["q", "freezer", "action", "from", "to"]) $(id).addEventListener("input", draw);
+
+  $("csv").addEventListener("click", () => {
+    const cell = (v) => /[",\n]/.test(v = String(v ?? "")) ? '"' + v.replace(/"/g, '""') + '"' : v;
+    const rows = [["date", "time", "what", "food", "label id", "freezer", "from", "to", "phone"]]
+      .concat(shown().map(e => [localDay(e.at), time(e.at), WORD[e.action] || e.action, e.text, e.id, e.shelf, e.from, e.to, e.device]));
+    const blob = new Blob([rows.map(r => r.map(cell).join(",")).join("\r\n")], { type: "text/csv" });
+    const a = el("a"); a.href = URL.createObjectURL(blob); a.download = `freezer-history-${localDay(new Date().toISOString())}.csv`;
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  });
+
+  async function load(){
+    if (!key) { $("sub").textContent = "This link is missing its key. Open the history from your freezer link."; return; }
+    try {
+      const j = await api("GET", "history");
+      events = j.events || []; canWrite = !!j.canWrite;
+      const freezers = [...new Set(events.map(e => e.shelf).filter(Boolean))].sort();
+      const sel = $("freezer"), cur = sel.value;
+      sel.replaceChildren(new Option("All freezers", ""), ...freezers.map(f => new Option(f, f)));
+      sel.value = cur;
+      $("sub").textContent = events.length ? `Recorded since ${dayTitle(localDay(events[events.length - 1].at))}` : "Nothing recorded yet";
+      const months = (j.months || []).slice(1);             // "before the oldest month" would clear nothing
+      $("clear-wrap").hidden = !canWrite || j.demo || !months.length;
+      $("before").replaceChildren(...months.map(m => new Option("Everything before " + new Date(m + "-15").toLocaleDateString(undefined, { month: "long", year: "numeric" }), m)));
+      draw();
+    } catch (e) { $("sub").textContent = "Couldn't load the history (" + e.message + ")."; }
+  }
+  $("clear").addEventListener("click", async () => {
+    const m = $("before").value; if (!m) return;
+    const n = events.filter(e => localDay(e.at).slice(0, 7) < m).length;
+    if (!confirm(`Delete ${n} recorded change${n === 1 ? "" : "s"} from before ${$("before").selectedOptions[0].text.replace("Everything before ", "")}? This can't be undone.`)) return;
+    try {
+      const j = await api("DELETE", "history?before=" + encodeURIComponent(m));
+      $("clear-msg").textContent = `Cleared ${j.deleted.length} month${j.deleted.length === 1 ? "" : "s"}.`;
+      await load();
+    } catch (e) { $("clear-msg").textContent = "Couldn't clear it (" + e.message + ")."; }
+  });
+  load();
+})();
+</script>
+</body>
+</html>

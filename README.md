@@ -17,6 +17,7 @@ the list on their phone. Labels print on plain paper or a Brother label printer.
 | `public/label.html` | Label maker: a sheet of cut-out labels on plain paper (14 per page; bin labels twice as big), 29 × 90 mm labels for a Brother DK-1201 roll, or 23 × 23 mm squares for a DK-1221 roll (the code plus a short name). |
 | `public/bins.html` | Storage bins: scan a bin label to see its photos and notes; add a photo of what's inside. Search across all bins. |
 | `public/backup.html` | Share & back up: a dated read-only copy of the list to send, a backup file (everything, photos included), and restore. The same file works on every copy: website, self-hosted, offline phone. |
+| `public/history.html` | Every change to a label (in, out, moved freezer, renamed, date changed, deleted) with date and time, recorded by the server so nothing slips past. Search, filter by freezer, what happened and dates, CSV download; "Clear old history" is tucked away at the bottom (scanning link only). Kept in backups. |
 | `public/how.html` | The plain-English how-to page. |
 | `netlify/functions/api.mjs` | The only server code: stores the list in Netlify Blobs. |
 

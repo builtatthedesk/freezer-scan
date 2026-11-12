@@ -10,6 +10,7 @@
 //                                (the page adds the photos one by one; see public/backup.html)
 //   POST /api/restore            merge a backup's labels, bins and counters in
 //   PUT  /api/restore-photo/:bin/:pid/:size   one photo from a backup, if missing here
+// and the website's history routes (GET /api/history, DELETE /api/history?before=YYYY-MM).
 // Every saved item gets a "modAt" stamp, so a restore can tell which copy of a label
 // was changed last, even for changes that aren't scans (marked used, moved freezer).
 "use strict";
@@ -141,7 +142,9 @@ async function api(req, url, rest){
     const body = M === "PUT" ? cleanItem(await readJson(req)) : null;
     if (M === "PUT" && !body) return json(400, { error: "bad item" });
     if (body) body.modAt = now;
-    await kvUpdate("items", (items) => { if (body) items[path[1]] = body; else delete items[path[1]]; });
+    let old = null;
+    await kvUpdate("items", (items) => { old = items[path[1]] || null; if (body) items[path[1]] = body; else delete items[path[1]]; });
+    await addHistory(historyEvents(path[1], old, body, now)).catch(() => {});   // the list is saved either way
     return json(200, { ok: true });
   }
 
@@ -213,6 +216,14 @@ async function api(req, url, rest){
     return json(200, { ok: true });
   }
 
+  if (M === "GET" && path[0] === "history" && !path[1]) return json(200, Object.assign({ canWrite: true }, await readHistory()));
+  if (M === "DELETE" && path[0] === "history" && !path[1]) {
+    const before = url.searchParams.get("before") || "";
+    if (!/^\d{4}-\d{2}$/.test(before)) return json(400, { error: "Pick a month." });
+    const gone = (await readHistory()).months.filter(m => m < before);
+    await tx("kv", "readwrite", (t) => { for (const m of gone) t.objectStore("kv").delete("history/" + m); });
+    return json(200, { ok: true, deleted: gone });
+  }
   if (M === "GET" && path[0] === "backup" && !path[1]) return json(200, await backup(now));
   if (M === "POST" && path[0] === "restore" && !path[1]) {
     const b = await readJson(req);
@@ -239,8 +250,8 @@ async function api(req, url, rest){
 
 // ------------------------------------------------------------------ backup / restore
 async function backup(now){
-  const [items, bins, ids] = await Promise.all([kvGet("items"), kvGet("bins"), kvGet("ids")]);
-  return { app: "freezer-scan", kind: "backup", version: 1, at: now, items: items || {}, bins: bins || {}, ids: ids || {} };
+  const [items, bins, ids, h] = await Promise.all([kvGet("items"), kvGet("bins"), kvGet("ids"), readHistory()]);
+  return { app: "freezer-scan", kind: "backup", version: 1, at: now, items: items || {}, bins: bins || {}, ids: ids || {}, history: h.events };
 }
 
 // Merge, never wipe: a label already on this phone keeps whichever copy was changed
@@ -291,5 +302,51 @@ async function restore(b){
   // Label counters never go backwards, so new labels can't reuse a restored ID. Only
   // phone counters (7001 up) count: the website's (5001 up) never meet this phone's.
   await kvUpdate("ids", (c) => { for (const [d, n] of Object.entries(b.ids || {})) if (/^\d{6}$/.test(d) && Number(n) > PHONE_ID_START && Number(n) > (c[d] || 0)) c[d] = Number(n); });
-  return { ok: true, added, updated, binsAdded };
+  const events = cleanHistory(b.history);
+  if (events.length) await addHistory(events);           // duplicates are skipped
+  return { ok: true, added, updated, binsAdded, history: events.length };
+}
+
+// ------------------------------------------------------------------ history
+// Every change to a label, same rules as netlify/functions/api.mjs: kv "history/YYYY-MM"
+// holds that month's events.
+function historyEvents(id, old, now, at){
+  const ev = (action, extra) => Object.assign({ at, id, text: (now || old).text, action, shelf: (now || old).shelf || "", device: "" }, extra);
+  if (!old && !now) return [];
+  if (!now) return [ev("deleted")];
+  if (!old) return [ev(now.status)];
+  const out = [];
+  if (old.status !== now.status) out.push(ev(now.status, (old.shelf || "") !== (now.shelf || "") ? { from: old.shelf || "" } : {}));
+  else if ((old.shelf || "") !== (now.shelf || "")) out.push(ev("moved", { from: old.shelf || "", to: now.shelf || "" }));
+  if (old.text !== now.text) out.push(ev("renamed", { from: old.text, to: now.text }));
+  if ((old.printed || "") !== (now.printed || "")) out.push(ev("edited", { from: old.printed || "", to: now.printed || "" }));
+  return out;
+}
+function monthOf(iso){ const d = new Date(iso); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 7); }
+async function addHistory(events){
+  const byMonth = {};
+  for (const e of events) (byMonth[monthOf(e.at)] = byMonth[monthOf(e.at)] || []).push(e);
+  for (const [m, list] of Object.entries(byMonth))
+    await kvUpdate("history/" + m, (h) => {
+      const have = new Set((h.events || []).map(e => e.at + "|" + e.id + "|" + e.action));
+      h.events = (h.events || []).concat(list.filter(e => !have.has(e.at + "|" + e.id + "|" + e.action)));
+    });
+}
+async function readHistory(){
+  const range = IDBKeyRange.bound("history/", "history/\uffff");
+  const [keys, vals] = await tx("kv", "readonly", t => Promise.all([done(t.objectStore("kv").getAllKeys(range)), done(t.objectStore("kv").getAll(range))]));
+  const months = keys.map(k => k.slice(8));
+  const events = vals.flatMap(v => (v && v.events) || []).sort((a, b) => a.at < b.at ? 1 : a.at > b.at ? -1 : 0);
+  return { months, events };
+}
+const HIST_FIELDS = ["at", "id", "text", "action", "shelf", "from", "to", "device"];
+function cleanHistory(list){
+  if (!Array.isArray(list)) return [];
+  return list.slice(0, 100000).flatMap((e) => {
+    if (!e || typeof e !== "object" || !ID_RE.test(e.id || "") || isNaN(Date.parse(e.at))) return [];
+    if (!["in", "out", "moved", "renamed", "edited", "deleted"].includes(e.action)) return [];
+    const out = {};
+    for (const k of HIST_FIELDS) if (typeof e[k] === "string") out[k] = e[k].slice(0, 200);
+    return [out];
+  });
 }
