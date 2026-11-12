@@ -20,6 +20,9 @@
 //   GET    /api/backup                   write key -> everything except photo data
 //   POST   /api/restore                  write key, body = a backup, merged in (see restore())
 //   PUT    /api/restore-photo/:bin/:pid/full|thumb   write key, body { data } JPEG data URL, if missing here
+// History (public/history.html): every change to a label, recorded on the server.
+//   GET    /api/history                  read key -> { events (newest first), months, canWrite }
+//   DELETE /api/history?before=YYYY-MM   write key, clears every month before it
 // Keys come from the READ_KEY / WRITE_KEY env vars and arrive in the x-key header.
 // With DEMO=1 the key "demo" opens a separate sample list anyone may scan into;
 // it is reset to the sample food whenever it is more than a day old.
@@ -132,8 +135,58 @@ async function readItems(store, demo){
   if (fresh) return cur.data;
   const items = demoItems();
   await store.setJSON("items", items, { metadata: { seeded: new Date().toISOString() } });
+  const { blobs } = await store.list({ prefix: "history/" });     // yesterday's demo history goes too
+  for (const b of blobs) await store.delete(b.key);
   return items;
 }
+
+// ---------------------------------------------------------------- history
+// Every change to a label is recorded here, on the server, so it can't be missed from
+// any page or phone: one JSON blob per month, history/YYYY-MM = { events: [...] }.
+// An event: { at, id, text, action: in|out|moved|renamed|edited|deleted, shelf, from, to, device }.
+// The same rules live in offline/sw.js.
+function historyEvents(id, old, now, at, device){
+  const ev = (action, extra) => Object.assign({ at, id, text: (now || old).text, action, shelf: (now || old).shelf || "", device }, extra);
+  if (!old && !now) return [];
+  if (!now) return [ev("deleted")];
+  if (!old) return [ev(now.status)];
+  const out = [];
+  if (old.status !== now.status) out.push(ev(now.status, (old.shelf || "") !== (now.shelf || "") ? { from: old.shelf || "" } : {}));
+  else if ((old.shelf || "") !== (now.shelf || "")) out.push(ev("moved", { from: old.shelf || "", to: now.shelf || "" }));
+  if (old.text !== now.text) out.push(ev("renamed", { from: old.text, to: now.text }));
+  if ((old.printed || "") !== (now.printed || "")) out.push(ev("edited", { from: old.printed || "", to: now.printed || "" }));
+  return out;
+}
+const monthOf = (iso) => new Date(iso).toLocaleDateString("en-CA", { timeZone: process.env.TZ_NAME || "UTC" }).slice(0, 7);
+const DEMO_HISTORY_MAX = 500;      // the public demo's history is capped (it is wiped daily anyway)
+// Adds events not already there; returns how many were added, or -1 if a month couldn't be written.
+async function addHistory(store, events, demo){
+  const byMonth = {};
+  for (const e of events) (byMonth[monthOf(e.at)] = byMonth[monthOf(e.at)] || []).push(e);
+  let added = 0;
+  for (const [m, list] of Object.entries(byMonth)) {
+    let n = 0;
+    const stop = await updateJson(store, "history/" + m, (h) => {
+      const have = new Set((h.events || []).map(e => e.at + "|" + e.id + "|" + e.action));
+      const fresh = list.filter(e => { const k = e.at + "|" + e.id + "|" + e.action; return !have.has(k) && have.add(k); });
+      if (demo && (h.events || []).length >= DEMO_HISTORY_MAX) fresh.length = 0;
+      n = fresh.length;
+      h.events = (h.events || []).concat(fresh);
+    });
+    if (stop) { console.error("history write failed", m, stop.status); return -1; }
+    added += n;
+  }
+  return added;
+}
+async function readHistory(store){
+  const { blobs } = await store.list({ prefix: "history/" });
+  const months = blobs.map(b => b.key.slice(8)).filter(m => /^\d{4}-\d{2}$/.test(m)).sort();
+  const parts = await Promise.all(months.map(m => store.get("history/" + m, { type: "json" })));
+  // m = the month it's filed under, so the page counts exactly what a clear would delete.
+  const events = parts.flatMap((p, i) => ((p && p.events) || []).map(e => Object.assign({ m: months[i] }, e))).sort((a, b) => a.at < b.at ? 1 : a.at > b.at ? -1 : 0);
+  return { months, events };
+}
+const deviceOf = (req) => ((req.headers.get("user-agent") || "").match(/\(([^)]+)\)/) || [, ""])[1].slice(0, 80);
 
 // ---------------------------------------------------------------- backup / restore
 // Same file and same merge as the offline edition (offline/sw.js), so a backup moves
@@ -151,6 +204,19 @@ function cleanBin(bin){
     .map(p => ({ id: p.id, at: str(p.at) || "" })).slice(0, MAX_PHOTOS);
   return { name, notes: typeof bin.notes === "string" ? bin.notes.slice(0, 2000) : "", photos,
            createdAt: str(bin.createdAt) || "", updatedAt: str(bin.updatedAt) || "" };
+}
+// History events from a backup file: known fields only, short strings, valid times.
+const HIST_FIELDS = ["at", "id", "text", "action", "shelf", "from", "to", "device"];
+function cleanHistory(list){
+  if (!Array.isArray(list)) return [];
+  return list.slice(0, 100000).flatMap((e) => {
+    if (!e || typeof e !== "object" || !ID_RE.test(e.id || "") || typeof e.at !== "string" || isNaN(Date.parse(e.at))) return [];
+    if (!["in", "out", "moved", "renamed", "edited", "deleted"].includes(e.action) || typeof e.text !== "string") return [];
+    const out = {};
+    for (const k of HIST_FIELDS) if (typeof e[k] === "string") out[k] = e[k].slice(0, 200);
+    out.at = new Date(e.at).toISOString();          // one form, so it sorts, dedupes and files the same everywhere
+    return [out];
+  });
 }
 const stampOf = (it) => String((it && (it.modAt || it.lastScan)) || "");
 async function restore(store, b){
@@ -200,7 +266,10 @@ async function restore(store, b){
     return false;
   }));
   if (ok.includes(false)) return json(409, { error: "busy, try again" });
-  return json(200, { ok: true, added, updated, binsAdded });
+  const events = cleanHistory(b.history);
+  const history = events.length ? await addHistory(store, events) : 0;       // duplicates are skipped
+  if (history < 0) return json(409, { error: "busy, try again (the labels were restored; restoring again adds the history)" });
+  return json(200, { ok: true, added, updated, binsAdded, history });
 }
 
 export default async (req) => {
@@ -228,7 +297,22 @@ export default async (req) => {
     if (!buf) return json(404, { error: "no such photo" });
     return new Response(buf, { headers: { "content-type": "image/jpeg", "cache-control": "private, max-age=31536000, immutable" } });
   }
+  if (req.method === "GET" && path[0] === "history" && !path[1]) {
+    if (demo) await readItems(store, demo);
+    const { months, events } = await readHistory(store);
+    return json(200, { events, months, canWrite, demo });
+  }
   if (!canWrite) return json(403, { error: "This link can only view the list." });
+  if (req.method === "DELETE" && path[0] === "history" && !path[1]) {
+    if (demo) return json(403, { error: "Clearing history is turned off in the demo." });
+    // Clear old history: ?before=YYYY-MM drops every month before it.
+    const before = new URL(req.url).searchParams.get("before") || "";
+    if (!/^\d{4}-\d{2}$/.test(before)) return json(400, { error: "Pick a month." });
+    const { months } = await readHistory(store);
+    const gone = months.filter(m => m < before);
+    for (const m of gone) await store.delete("history/" + m);
+    return json(200, { ok: true, deleted: gone });
+  }
 
   if (req.method === "GET" && path[0] === "share") {
     if (demo) return json(200, { readKey: "demo" });
@@ -242,6 +326,7 @@ export default async (req) => {
     for (let i = 0; i < 8; i++) {
       const cur = await store.getWithMetadata("items", { type: "json" });
       const items = (cur && cur.data) || {};
+      const old = items[id] || null;
       if (body) {
         body.modAt = new Date().toISOString();   // lets a restore tell which copy changed last
         if (demo && !items[id] && Object.keys(items).length >= 200) return json(400, { error: "The demo list is full." });
@@ -250,7 +335,11 @@ export default async (req) => {
       if (cur && !cur.etag) return json(500, { error: "storage gave no version tag" });
       const opts = cur ? { onlyIfMatch: cur.etag, metadata: cur.metadata } : { onlyIfNew: true };
       const res = await store.setJSON("items", items, opts);
-      if (res.modified) return json(200, { ok: true });
+      if (res.modified) {
+        // The list is saved; a history hiccup must not fail the scan.
+        await addHistory(store, historyEvents(id, old, body, (body && body.modAt) || new Date().toISOString(), deviceOf(req)), demo).catch(e => console.error("history", e));
+        return json(200, { ok: true });
+      }
     }
     return json(409, { error: "busy, try again" });
   }
@@ -349,7 +438,8 @@ export default async (req) => {
       const day = b.key.slice(4), c = /^\d{6}$/.test(day) && await store.get(b.key, { type: "json" });
       if (c && Number(c.next) > 0) ids[day] = Number(c.next);
     }));
-    return json(200, { app: "freezer-scan", kind: "backup", version: 1, at: new Date().toISOString(), items, bins, ids });
+    const { events: history } = await readHistory(store);
+    return json(200, { app: "freezer-scan", kind: "backup", version: 1, at: new Date().toISOString(), items, bins, ids, history });
   }
   if (req.method === "POST" && path[0] === "restore" && !path[1]) {
     if (demo) return json(403, { error: "Restoring is turned off in the demo." });

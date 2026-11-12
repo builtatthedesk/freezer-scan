@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const out = join(root, "dist-offline");
-const PAGES = ["index.html", "list.html", "label.html", "bins.html", "backup.html"];         // from public/
+const PAGES = ["index.html", "list.html", "label.html", "bins.html", "backup.html", "history.html"];         // from public/
 const SHARED = ["qrcode.js", "jsqr.js"];                                     // from public/
 const OWN = ["edition.js", "manifest.webmanifest", "icon-192.png", "icon-512.png"];   // from offline/
 
