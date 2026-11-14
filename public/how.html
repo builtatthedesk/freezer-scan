@@ -101,6 +101,20 @@
   </ol>
   <div class="note">Label printer from a computer: choose the Brother printer, paper size 29 mm × 90 mm, scale 100%. Bluetooth scanner: put it in keyboard (HID) mode and pair it with the phone; for the Tera, scan "Bluetooth HID" then "Pairing" from its manual, or hold the trigger for 8 seconds.</div>
 
+  <h2 id="one-phone">Or try it on one phone, with no internet</h2>
+  <p>Want to see what it's like before you make a copy of your own? There is a version that runs entirely on one phone. Nothing to sign up for, no website of your own, no passwords. You open it once, and after that it works with no signal at all — in the basement, in the garage, on a plane.</p>
+  <div class="btns">
+    <a class="btn main" href="https://builtatthedesk.github.io/freezer-scan/">Open the one-phone version</a>
+  </div>
+  <ol class="setup">
+    <li><b>Open the link above in Chrome</b> on an Android phone. Give it a few seconds the first time — it is copying itself onto the phone.</li>
+    <li><b>Install it.</b> Menu ⋮ → <b>Install app</b> (or <b>Add to Home screen</b>). From then on, open it from the icon.</li>
+    <li><b>Make labels and scan</b> just like above: <b>Make labels</b> → <b>Plain paper</b>, print the sheet at 100%, tape them on, then <b>Scan with camera</b>.</li>
+    <li><b>Check that it really works with no internet.</b> Close the app — swipe it away, don't just go to the home screen — turn on airplane mode, and open it again from the icon. Your list is still there and you can keep scanning.</li>
+    <li><b>Back it up.</b> Tap <b>Share &amp; back up</b> and save the file somewhere that isn't the phone: email it to yourself, or drop it in your cloud drive. The app reminds you if it has been a while.</li>
+  </ol>
+  <div class="note"><b>What's different:</b> the list lives on that one phone and nowhere else. Nobody else can see it, and if you lose the phone without a backup, you lose the list — so do step 5. Labels print on plain paper only (the label-printer button and the photo suggestions both need a website). If you want the family to see the list on their own phones, make your own copy with the button further up — and you can restore this phone's backup into it, so nothing you scanned here is wasted.</div>
+
   <h2>Or build your own with Claude Code</h2>
   <p>Rather have your own version built from nothing, your way? <a href="https://claude.com/claude-code">Claude Code</a> is an AI helper that writes and runs code for you. Copy this prompt, paste it in, and change anything you like (your freezers, your words). It explains each step as it goes and asks before putting anything online.</p>
   <p><button class="copy" id="copy-prompt" type="button">Copy the prompt</button> <span id="copy-ok" style="color:var(--muted);font-size:15px" aria-live="polite"></span></p>
@@ -201,6 +215,7 @@ Rules:
   <details><summary>Two packs of the same thing?</summary><p>Each label gets its own number, so seven packs of meatloaf are seven separate entries. Take one out and six are left.</p></details>
   <details><summary>Do I have to scan the freezer label every time?</summary><p>Only when you switch freezers. If you forget, food still gets saved; it just isn't sorted into a freezer.</p></details>
   <details><summary>What does it cost?</summary><p>Nothing to start: paper, tape, your phone and a free Netlify site. A label printer and a Bluetooth scanner are optional upgrades.</p></details>
+  <details><summary>Can I use it without putting anything online?</summary><p>Yes — see <a href="#one-phone">"Or try it on one phone, with no internet"</a> above. The whole app installs onto one Android phone and runs with no signal. The trade-off is that the list stays on that phone, so back it up.</p></details>
   <details><summary>Can I see the code?</summary><p>Yes: <a href="https://github.com/builtatthedesk/freezer-scan">github.com/builtatthedesk/freezer-scan</a> (MIT licence).</p></details>
 
   <footer>Made by <a href="https://github.com/builtatthedesk">Built at the Desk</a>.</footer>
