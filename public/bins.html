@@ -436,6 +436,17 @@
   // A place label is the same LOC: label the freezer page uses, printed from the label
   // page ("Which freezer" / Shelf label). Here it means "the bins I scan next are here".
   const tidyPlace = (v) => String(v).replace(/\s+/g, " ").trim().slice(0, 60);   // same rules as the server
+  let freezerNames = null;     // places the food list already uses as a freezer, lower-cased
+  async function knownFreezers(){
+    if (freezerNames) return freezerNames;
+    try {
+      const j = await api("GET", "items");
+      freezerNames = new Set(Object.values(j.items || {})
+        .map(i => tidyPlace(i.shelf || "").toLowerCase()).filter(Boolean));
+    } catch { freezerNames = new Set(); }    // can't tell -> don't block the scan
+    return freezerNames;
+  }
+
   const placeOf = (raw) => { const m = /^\s*LOC:\s*([^\n\r]+)$/.exec(String(raw).trim()); const p = m ? tidyPlace(m[1]) : ""; return p || null; };
 
   // A bin scanned while a place is set gets filed there. Unknown bins (not in the list
@@ -483,11 +494,17 @@
           // A place label keeps the camera open: scan the place, then the bins.
           const p = placeOf(raws[0]);
           if (p && canWrite) {
-            if (p !== place) {
-              try { navigator.vibrate && navigator.vibrate(40); } catch {}
-              setPlace(p);
+            const isFreezer = (await knownFreezers()).has(p.toLowerCase());
+            if (cam !== me) return;                 // the camera closed while we asked
+            if (isFreezer) {
+              $("cam-tip").textContent = '"' + p + '" is a freezer label — print a place label for bins';
+            } else {
+              if (p !== place) {
+                try { navigator.vibrate && navigator.vibrate(40); } catch {}
+                setPlace(p);
+              }
+              $("cam-tip").textContent = "Bins now go in: " + p + " — scan one";
             }
-            $("cam-tip").textContent = "Bins now go in: " + p + " — scan one";
           } else {
             $("cam-tip").textContent = p ? "This link can only look" : "That's not a bin label";
           }
