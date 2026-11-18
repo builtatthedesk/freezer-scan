@@ -144,6 +144,7 @@
   // surprise, and cleared from that banner.
   let place = LS.get("fs.binplace") || "";
   let filterPlace = "";        // list filter, separate from where bins are being put
+  let filterNone = false;      // "No place yet" filter; a flag, so no string can collide with it
   function setPlace(name){
     place = name || "";
     LS.set("fs.binplace", place);
@@ -167,7 +168,7 @@
 
   async function moveBin(id, to){
     const b = bins[id]; if (!b) return;
-    await api("PUT", "bins/" + encodeURIComponent(id), { name: b.name, notes: b.notes || "", location: to });
+    await api("PUT", "bins/" + encodeURIComponent(id), { name: b.name, location: to });   // notes omitted = preserved
     b.location = to;    // so the list is right even before the reload lands
   }
 
@@ -213,26 +214,34 @@
 
   function renderPlaceChips(){
     const bar = $("place-chips"), places = placesInUse();
+    const noneCount = Object.values(bins).filter(b => !(b.location || "").trim()).length;
+    // A filter whose chip is gone would hide every bin with no way back: drop it.
+    if (filterPlace && !places.includes(filterPlace)) filterPlace = "";
+    if (filterNone && !noneCount) filterNone = false;
     bar.replaceChildren();
-    bar.hidden = places.length < 2;      // one place (or none) needs no filter
+    bar.hidden = places.length < 2 && !(places.length === 1 && noneCount);
     if (bar.hidden) return;
-    const mk = (label, value) => {
+    const mk = (label, value, none) => {
       const b = document.createElement("button");
       b.type = "button"; b.textContent = label;
-      if (filterPlace === value) b.className = "main";
-      b.addEventListener("click", () => { filterPlace = filterPlace === value ? "" : value; renderList(); });
+      const on = none ? filterNone : (!value ? !filterPlace && !filterNone : filterPlace === value);
+      if (on) b.className = "main";
+      b.addEventListener("click", () => {
+        if (none) { filterNone = !filterNone; filterPlace = ""; }
+        else { filterPlace = filterPlace === value ? "" : value; filterNone = false; }
+        renderList();
+      });
       return b;
     };
     bar.append(mk("All", ""), ...places.map(p => mk(p, p)));
-    const noneCount = Object.values(bins).filter(b => !(b.location || "").trim()).length;
-    if (noneCount) bar.append(mk("No place yet", "\u0000"));
+    if (noneCount) bar.append(mk("No place yet", "", true));
   }
 
   function renderList(){
     const q = $("q").value.trim().toLowerCase();
     const rows = Object.entries(bins)
       .filter(([, b]) => !q || (b.name + " " + (b.notes || "") + " " + (b.location || "")).toLowerCase().includes(q))
-      .filter(([, b]) => !filterPlace || (filterPlace === "\u0000" ? !(b.location || "").trim() : (b.location || "") === filterPlace))
+      .filter(([, b]) => filterNone ? !(b.location || "").trim() : (!filterPlace || (b.location || "") === filterPlace))
       .sort(byName);
     const list = $("list");
     renderPlaceChips();
@@ -273,7 +282,12 @@
   function closeBin(){ openId = null; $("detail").hidden = true; $("home").hidden = false; renderList(); }
   window.addEventListener("popstate", () => {
     const m = location.hash.match(/[#&]bin=([\w.:-]+)/);
-    if (m) { openId = m[1]; renderDetail(); } else closeBin();
+    // Landing on a different bin drops any open draft: it was typed against the bin it
+    // came from, and Save would otherwise write it over this one's words.
+    if (m) {
+      if (m[1] !== openId) { notesDirty = false; editing = false; $("d-msg").textContent = ""; }
+      openId = m[1]; renderDetail();
+    } else { notesDirty = false; editing = false; closeBin(); }
   });
   $("back").addEventListener("click", () => { if (history.state && history.state.bin) history.back(); else { history.replaceState(null, "", location.pathname + keyHash); closeBin(); } });
 
@@ -283,7 +297,8 @@
     if (!b) {
       $("d-name").textContent = "Bin not found";
       $("d-meta").textContent = "This label isn't in the list (it may have been deleted).";
-      $("d-notes-view").textContent = ""; $("d-edit").hidden = true; $("d-admin").hidden = true; $("d-photos").replaceChildren();
+      $("d-notes-view").textContent = ""; $("d-edit").hidden = true; $("d-actions").hidden = true;
+      $("d-admin").hidden = true; $("d-photos").replaceChildren();
       return;
     }
     $("d-name").textContent = b.name;
@@ -296,7 +311,7 @@
     $("d-actions").hidden = !canWrite;
     $("d-words").textContent = (b.notes || "").trim() ? "✏️ Edit words" : "✏️ Add words";
     $("d-edit").hidden = !editing;
-    if (!notesDirty && !editing) $("d-notes").value = b.notes || "";
+    if (!notesDirty) $("d-notes").value = b.notes || "";   // untouched box still follows the server
     $("d-admin").hidden = !canWrite;
     $("d-print").href = "label.html" + (keyHash ? keyHash + "&" : "#") + "reprint=" + encodeURIComponent(openId);
     $("d-add").hidden = demo;
@@ -346,7 +361,7 @@
   $("d-save").addEventListener("click", async () => {
     const id = openId, b = bins[id]; if (!b) return;
     $("d-save").disabled = true;
-    try { await api("PUT", "bins/" + encodeURIComponent(id), { name: b.name, notes: $("d-notes").value, location: b.location || "" }); notesDirty = false; editing = false; $("d-edit").hidden = true; note("Saved."); await load(); }
+    try { await api("PUT", "bins/" + encodeURIComponent(id), { name: b.name, notes: $("d-notes").value }); notesDirty = false; editing = false; $("d-edit").hidden = true; note("Saved."); await load(); }
     catch (e) { note("Not saved: " + e.message, true); }
     $("d-save").disabled = false;
   });
@@ -420,12 +435,16 @@
   const binIdOf = (raw) => { const m = /^\s*BIN:[\s\S]*?ID:\s*(\d{6}-\d{3,})/.exec(raw); return m ? m[1] : null; };
   // A place label is the same LOC: label the freezer page uses, printed from the label
   // page ("Which freezer" / Shelf label). Here it means "the bins I scan next are here".
-  const placeOf = (raw) => { const m = /^\s*LOC:\s*([^\n\r]{1,60})\s*$/.exec(String(raw).trim()); return m ? m[1].trim() : null; };
+  const tidyPlace = (v) => String(v).replace(/\s+/g, " ").trim().slice(0, 60);   // same rules as the server
+  const placeOf = (raw) => { const m = /^\s*LOC:\s*([^\n\r]+)$/.exec(String(raw).trim()); const p = m ? tidyPlace(m[1]) : ""; return p || null; };
 
   // A bin scanned while a place is set gets filed there. Unknown bins (not in the list
   // yet) are just opened -- there is no name to PUT, and the bin page can set it.
   async function fileScannedBin(id){
     if (!canWrite || !place) return;
+    // A bin made on another phone since this page loaded isn't in `bins` yet; fetch once
+    // rather than silently not filing it while the banner says bins are going somewhere.
+    if (!bins[id]) { try { await load(); } catch {} }
     const b = bins[id];
     if (!b || (b.location || "") === place) return;
     try { await moveBin(id, place); note("Moved to " + place + "."); load(); }
@@ -468,7 +487,7 @@
               try { navigator.vibrate && navigator.vibrate(40); } catch {}
               setPlace(p);
             }
-            $("cam-tip").textContent = "Bins now go in: " + p + " — scan them";
+            $("cam-tip").textContent = "Bins now go in: " + p + " — scan one";
           } else {
             $("cam-tip").textContent = p ? "This link can only look" : "That's not a bin label";
           }

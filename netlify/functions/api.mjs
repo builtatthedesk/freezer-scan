@@ -202,7 +202,10 @@ function cleanBin(bin){
   const photos = (Array.isArray(bin.photos) ? bin.photos : [])
     .filter(p => p && typeof p === "object" && ID_RE.test(p.id || ""))
     .map(p => ({ id: p.id, at: str(p.at) || "" })).slice(0, MAX_PHOTOS);
-  return { name, notes: typeof bin.notes === "string" ? bin.notes.slice(0, 2000) : "", photos,
+  // location must be listed here or a restore quietly strips it: backup exports it,
+  // and on a merge the cleaned object replaces the stored bin when its updatedAt wins.
+  const location = typeof bin.location === "string" ? bin.location.replace(/\s+/g, " ").trim().slice(0, 60) : "";
+  return { name, notes: typeof bin.notes === "string" ? bin.notes.slice(0, 2000) : "", photos, location,
            createdAt: str(bin.createdAt) || "", updatedAt: str(bin.updatedAt) || "" };
 }
 // History events from a backup file: known fields only, short strings, valid times.

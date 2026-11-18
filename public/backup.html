@@ -123,7 +123,7 @@
       const [{ items }, { bins }] = await Promise.all([api("GET", "items"), api("GET", "bins")]);
       const inside = Object.values(items).filter(i => i.status === "in")
         .map(i => ({ t: i.text, d: i.printed || (i.inAt || i.firstSeen || "").slice(0, 10), f: i.shelf || "" }));
-      const binList = Object.values(bins).map(b => ({ n: b.name, x: b.notes || "" })).sort((a, b) => a.n.localeCompare(b.n));
+      const binList = Object.values(bins).map(b => ({ n: b.name, x: b.notes || "", p: b.location || "" })).sort((a, b) => a.n.localeCompare(b.n));
       const file = new File([snapshotPage({ at: new Date().toISOString(), items: inside, bins: binList })],
         `Freezer list ${stamp()}.html`, { type: "text/html" });
       const how = await sendFile(file, "Freezer list");
@@ -162,8 +162,8 @@ const by=new Map();for(const i of D.items){if(q&&!i.t.toLowerCase().includes(q))
 const names=Array.from(by.keys()).sort();if(!names.length)out.append(el("p","n",q?"Nothing matches.":"The freezers are empty."));
 for(const f of names){const L=by.get(f);out.append(el("h2","",f+" ("+L.length+")"));const ul=el("ul");
 for(const i of L.sort((a,b)=>a.d<b.d?-1:1)){const li=el("li"),[c,a]=age(i.d);li.append(el("span","",i.t),el("span","age "+c,a));ul.append(li)}out.append(ul)}
-const bins=D.bins.filter(b=>!q||(b.n+" "+b.x).toLowerCase().includes(q));
-if(bins.length){out.append(el("h2","","Storage bins"));const ul=el("ul");for(const b of bins){const li=el("li");li.append(el("span","",b.n),el("span","n",b.x));ul.append(li)}out.append(ul)}}
+const bins=D.bins.filter(b=>!q||(b.n+" "+b.x+" "+(b.p||"")).toLowerCase().includes(q));
+if(bins.length){out.append(el("h2","","Storage bins"));const ul=el("ul");for(const b of bins){const li=el("li");li.append(el("span","",b.n+(b.p?" · "+b.p:"")),el("span","n",b.x));ul.append(li)}out.append(ul)}}
 document.getElementById("q").addEventListener("input",draw);draw();
 <\/script></body></html>`;
   }
