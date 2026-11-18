@@ -154,10 +154,17 @@ async function api(req, url, rest){
       const b = await readJson(req);
       const name = b && typeof b.name === "string" ? b.name.replace(/\s+/g, " ").trim() : "";
       const notes = b && typeof b.notes === "string" ? b.notes.slice(0, 2000) : undefined;
+      // Same rules as the server (netlify/functions/api.mjs): where the bin is now, "" clears it.
+      const location = b && typeof b.location === "string" ? b.location.replace(/\s+/g, " ").trim().slice(0, 60) : undefined;
       if (!name || name.length > 80) return json(400, { error: "A bin needs a name (80 letters at most)." });
       await kvUpdate("bins", (bins) => {
         const old = bins[id] || { notes: "", photos: [], createdAt: now };
-        bins[id] = Object.assign({}, old, { name, notes: notes === undefined ? old.notes : notes, updatedAt: now });
+        bins[id] = Object.assign({}, old, {
+          name,
+          notes: notes === undefined ? old.notes : notes,
+          location: location === undefined ? (old.location || "") : location,
+          updatedAt: now,
+        });
       });
       return json(200, { ok: true });
     }
@@ -266,7 +273,10 @@ function cleanBin(bin){
   const photos = (Array.isArray(bin.photos) ? bin.photos : [])
     .filter(p => p && typeof p === "object" && ID_RE.test(p.id || ""))
     .map(p => ({ id: p.id, at: str(p.at) || "" })).slice(0, MAX_PHOTOS);
-  return { name, notes: typeof bin.notes === "string" ? bin.notes.slice(0, 2000) : "", photos,
+  // location must be listed here or a restore quietly strips it: backup exports it,
+  // and on a merge the cleaned object replaces the stored bin when its updatedAt wins.
+  const location = typeof bin.location === "string" ? bin.location.replace(/\s+/g, " ").trim().slice(0, 60) : "";
+  return { name, notes: typeof bin.notes === "string" ? bin.notes.slice(0, 2000) : "", photos, location,
            createdAt: str(bin.createdAt) || "", updatedAt: str(bin.updatedAt) || "" };
 }
 const stampOf = (it) => String((it && (it.modAt || it.lastScan)) || "");
