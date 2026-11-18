@@ -351,11 +351,19 @@ export default async (req) => {
       const b = await readJson(req);
       const name = b && typeof b.name === "string" ? b.name.replace(/\s+/g, " ").trim() : "";
       const notes = b && typeof b.notes === "string" ? b.notes.slice(0, 2000) : undefined;
+      // Where the bin is right now (attic, garage, ...). Bins move, so this is just a
+      // label on the bin, not a container of its own. "" clears it.
+      const location = b && typeof b.location === "string" ? b.location.replace(/\s+/g, " ").trim().slice(0, 60) : undefined;
       if (!name || name.length > 80) return json(400, { error: "A bin needs a name (80 letters at most)." });
       const stop = await updateJson(store, "bins", (bins) => {
         if (demo && !bins[id] && Object.keys(bins).length >= 40) return json(400, { error: "The demo has enough bins." });
         const old = bins[id] || { notes: "", photos: [], createdAt: now };
-        bins[id] = Object.assign({}, old, { name, notes: notes === undefined ? old.notes : notes, updatedAt: now });
+        bins[id] = Object.assign({}, old, {
+          name,
+          notes: notes === undefined ? old.notes : notes,
+          location: location === undefined ? (old.location || "") : location,
+          updatedAt: now,
+        });
       });
       return stop || json(200, { ok: true });
     }

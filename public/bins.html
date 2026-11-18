@@ -67,7 +67,9 @@
       <a class="btn" id="labels" href="label.html" hidden>Make bin labels</a>
       <a id="freezer" href="./">Freezers</a>
     </div>
+    <div id="place-bar" class="msg" hidden style="margin:0 0 12px"></div>
     <div class="search"><input id="q" type="search" placeholder="Search, e.g. lights" autocomplete="off" aria-label="Search bins"></div>
+    <div class="bar" id="place-chips"></div>
     <div id="list"></div>
   </section>
 
@@ -80,12 +82,19 @@
       <h2 id="d-name"></h2>
       <p class="sub" id="d-meta"></p>
       <div id="d-notes-view" class="notes-view"></div>
-      <div id="d-edit" hidden>
+      <!-- Scanning a bin should just show it. Words and photos are each one tap away,
+           so the keyboard never opens unless you asked for it. -->
+      <div class="bar" id="d-actions" hidden style="margin:12px 0 0">
+        <button class="main" type="button" id="d-words">✏️ Add words</button>
+        <label class="btn main" id="d-add">📷 Add photo<input id="d-file" type="file" accept="image/*" hidden></label>
+        <button type="button" id="d-move">📍 Move</button>
+      </div>
+      <div id="d-edit" hidden style="margin-top:12px">
         <label for="d-notes" class="sub">What's inside (a few words, so search can find it)</label>
         <textarea id="d-notes" maxlength="2000" placeholder="e.g. lights, extension cords, tree skirt"></textarea>
         <div class="bar" style="margin:10px 0 0">
           <button class="main" type="button" id="d-save">Save words</button>
-          <label class="btn main" id="d-add">📷 Add photo<input id="d-file" type="file" accept="image/*" hidden></label>
+          <button type="button" id="d-cancel">Cancel</button>
         </div>
       </div>
       <p class="note" id="d-msg" role="status"></p>
@@ -126,7 +135,41 @@
 
   let bins = {}, canWrite = false, openId = null, demo = false;
   let notesDirty = false;      // typed words not saved yet: a refresh must not wipe them
+  let editing = false;         // the words box is open: a background refresh must not shut it
   $("d-notes").addEventListener("input", () => { notesDirty = true; });
+
+  // Scanning a LOC: label sets "where bins go" for this phone, the same way the freezer
+  // page uses a shelf label: scan the place once, then scan the bins you carried there.
+  // Sticky on purpose (it survives a reload), with a visible banner so it can't be a
+  // surprise, and cleared from that banner.
+  let place = LS.get("fs.binplace") || "";
+  let filterPlace = "";        // list filter, separate from where bins are being put
+  function setPlace(name){
+    place = name || "";
+    LS.set("fs.binplace", place);
+    renderPlaceBar();
+  }
+  function renderPlaceBar(){
+    const bar = $("place-bar");
+    bar.hidden = !place || !canWrite;
+    if (bar.hidden) return;
+    bar.replaceChildren();
+    const t = document.createElement("span");
+    t.innerHTML = "Bins you scan now go in <b>" + esc(place) + "</b>. ";
+    const stop = document.createElement("button");
+    stop.type = "button"; stop.textContent = "Stop";
+    stop.style.marginLeft = "8px";
+    stop.addEventListener("click", () => setPlace(""));
+    bar.append(t, stop);
+  }
+  const placesInUse = () => [...new Set(Object.values(bins).map(b => (b.location || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
+  async function moveBin(id, to){
+    const b = bins[id]; if (!b) return;
+    await api("PUT", "bins/" + encodeURIComponent(id), { name: b.name, notes: b.notes || "", location: to });
+    b.location = to;    // so the list is right even before the reload lands
+  }
 
   async function api(method, path, body){
     const r = await fetch("/api/" + path, { method, cache: "no-store",
@@ -160,16 +203,39 @@
       bins = j.bins || {}; canWrite = !!j.canWrite; demo = !!j.demo;
       $("labels").hidden = !canWrite;
       const n = Object.keys(bins).length;
-      $("sub").textContent = (j.demo ? "Demo bins, reset every day. " : "") + (n === 1 ? "1 bin" : n + " bins") + (canWrite ? ". Scan a bin's label to see inside or add a photo." : ". Scan a bin's label to see what's inside.");
+      $("sub").textContent = (j.demo ? "Demo bins, reset every day. " : "") + (n === 1 ? "1 bin" : n + " bins")
+        + (canWrite ? ". Scan a place label (Attic, Garage) first and the bins you scan after it are filed there." : ". Scan a bin's label to see what's inside.");
+      renderPlaceBar();
       renderList();
       if (openId) renderDetail();
     } catch (e) { $("sub").textContent = "Couldn't load the bins: " + e.message; }
   }
 
+  function renderPlaceChips(){
+    const bar = $("place-chips"), places = placesInUse();
+    bar.replaceChildren();
+    bar.hidden = places.length < 2;      // one place (or none) needs no filter
+    if (bar.hidden) return;
+    const mk = (label, value) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = label;
+      if (filterPlace === value) b.className = "main";
+      b.addEventListener("click", () => { filterPlace = filterPlace === value ? "" : value; renderList(); });
+      return b;
+    };
+    bar.append(mk("All", ""), ...places.map(p => mk(p, p)));
+    const noneCount = Object.values(bins).filter(b => !(b.location || "").trim()).length;
+    if (noneCount) bar.append(mk("No place yet", "\u0000"));
+  }
+
   function renderList(){
     const q = $("q").value.trim().toLowerCase();
-    const rows = Object.entries(bins).filter(([, b]) => !q || (b.name + " " + (b.notes || "")).toLowerCase().includes(q)).sort(byName);
+    const rows = Object.entries(bins)
+      .filter(([, b]) => !q || (b.name + " " + (b.notes || "") + " " + (b.location || "")).toLowerCase().includes(q))
+      .filter(([, b]) => !filterPlace || (filterPlace === "\u0000" ? !(b.location || "").trim() : (b.location || "") === filterPlace))
+      .sort(byName);
     const list = $("list");
+    renderPlaceChips();
     if (!Object.keys(bins).length) {
       list.innerHTML = '<div class="msg"><strong>No bins yet.</strong> ' + (canWrite ? 'Tap <b>Make bin labels</b>, type a name like Christmas and how many bins, print and stick them on. Then scan each bin and add a photo of what is inside.' : 'Nothing has been labelled yet.') + '</div>';
       return;
@@ -183,7 +249,9 @@
       if (latest) photoUrl(id, latest.id, "thumb").then(u => { const im = new Image(); im.src = u; im.alt = ""; pic.replaceChildren(im); }).catch(() => {});
       const t = document.createElement("div"); t.className = "t"; t.textContent = b.name;
       const m = document.createElement("div"); m.className = "m";
-      m.textContent = b.notes || ((b.photos || []).length ? (b.photos.length === 1 ? "1 photo" : b.photos.length + " photos") : "No photo yet");
+      m.textContent = [(b.location || "").trim() ? "📍 " + b.location : "",
+                       b.notes || ((b.photos || []).length ? (b.photos.length === 1 ? "1 photo" : b.photos.length + " photos") : "No photo yet")]
+                      .filter(Boolean).join(" · ");
       card.append(pic, t, m);
       card.addEventListener("click", () => openBin(id));
       grid.append(card);
@@ -198,7 +266,7 @@
     const url = location.pathname + (keyHash ? keyHash + "&" : "#") + "bin=" + encodeURIComponent(id);
     if (replace) history.replaceState({ bin: id }, "", url); else history.pushState({ bin: id }, "", url);
     $("d-msg").textContent = ""; $("d-msg").classList.remove("err");
-    notesDirty = false;
+    notesDirty = false; editing = false;
     renderDetail();
     window.scrollTo(0, 0);
   }
@@ -220,10 +288,16 @@
     }
     $("d-name").textContent = b.name;
     const n = (b.photos || []).length;
-    $("d-meta").textContent = [n ? (n === 1 ? "1 photo" : n + " photos") : "No photo yet", b.updatedAt ? "updated " + day(b.updatedAt) : ""].filter(Boolean).join(" · ");
-    $("d-notes-view").textContent = canWrite ? "" : (b.notes || "");
-    $("d-edit").hidden = !canWrite; $("d-admin").hidden = !canWrite;
-    if (canWrite && !notesDirty) $("d-notes").value = b.notes || "";
+    $("d-meta").textContent = [(b.location || "").trim() ? "📍 " + b.location : "No place yet",
+                               n ? (n === 1 ? "1 photo" : n + " photos") : "No photo yet",
+                               b.updatedAt ? "updated " + day(b.updatedAt) : ""].filter(Boolean).join(" · ");
+    // Read the words without being handed a keyboard; "Add words" opens the editor.
+    $("d-notes-view").textContent = b.notes || "";
+    $("d-actions").hidden = !canWrite;
+    $("d-words").textContent = (b.notes || "").trim() ? "✏️ Edit words" : "✏️ Add words";
+    $("d-edit").hidden = !editing;
+    if (!notesDirty && !editing) $("d-notes").value = b.notes || "";
+    $("d-admin").hidden = !canWrite;
     $("d-print").href = "label.html" + (keyHash ? keyHash + "&" : "#") + "reprint=" + encodeURIComponent(openId);
     $("d-add").hidden = demo;
     if (demo && !$("d-msg").textContent) note("Photos are turned off in the demo; on your own copy, Add photo goes here.");
@@ -249,10 +323,30 @@
 
   function note(t, err){ $("d-msg").textContent = t; $("d-msg").classList.toggle("err", !!err); }
 
+  $("d-words").addEventListener("click", () => {
+    editing = true;
+    $("d-edit").hidden = false;
+    $("d-notes").focus();
+    $("d-notes").setSelectionRange($("d-notes").value.length, $("d-notes").value.length);
+  });
+  $("d-cancel").addEventListener("click", () => {
+    const b = bins[openId];
+    $("d-notes").value = b ? (b.notes || "") : "";
+    notesDirty = false; editing = false; $("d-edit").hidden = true; note("");
+  });
+  $("d-move").addEventListener("click", async () => {
+    const id = openId, b = bins[id]; if (!b) return;
+    const known = placesInUse();
+    const to = (prompt("Where is this bin now?" + (known.length ? "\n\nAlready in use: " + known.join(", ") : "")
+                       + "\n\n(Leave empty to clear the place.)", b.location || place || "") ?? null);
+    if (to === null) return;                       // Cancel, not "clear it"
+    try { await moveBin(id, to.trim()); note(to.trim() ? "Moved to " + to.trim() + "." : "Place cleared."); await load(); }
+    catch (e) { note("Not moved: " + e.message, true); }
+  });
   $("d-save").addEventListener("click", async () => {
     const id = openId, b = bins[id]; if (!b) return;
     $("d-save").disabled = true;
-    try { await api("PUT", "bins/" + encodeURIComponent(id), { name: b.name, notes: $("d-notes").value }); notesDirty = false; note("Saved."); await load(); }
+    try { await api("PUT", "bins/" + encodeURIComponent(id), { name: b.name, notes: $("d-notes").value, location: b.location || "" }); notesDirty = false; editing = false; $("d-edit").hidden = true; note("Saved."); await load(); }
     catch (e) { note("Not saved: " + e.message, true); }
     $("d-save").disabled = false;
   });
@@ -324,6 +418,19 @@
     };
   }
   const binIdOf = (raw) => { const m = /^\s*BIN:[\s\S]*?ID:\s*(\d{6}-\d{3,})/.exec(raw); return m ? m[1] : null; };
+  // A place label is the same LOC: label the freezer page uses, printed from the label
+  // page ("Which freezer" / Shelf label). Here it means "the bins I scan next are here".
+  const placeOf = (raw) => { const m = /^\s*LOC:\s*([^\n\r]{1,60})\s*$/.exec(String(raw).trim()); return m ? m[1].trim() : null; };
+
+  // A bin scanned while a place is set gets filed there. Unknown bins (not in the list
+  // yet) are just opened -- there is no name to PUT, and the bin page can set it.
+  async function fileScannedBin(id){
+    if (!canWrite || !place) return;
+    const b = bins[id];
+    if (!b || (b.location || "") === place) return;
+    try { await moveBin(id, place); note("Moved to " + place + "."); load(); }
+    catch (e) { note("Couldn't set the place: " + e.message, true); }
+  }
   async function openCam(){
     if (cam) return;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return alert("This browser can't use the camera. Try Chrome on the phone.");
@@ -347,8 +454,24 @@
         if (raws.length > 1) $("cam-tip").textContent = "One label at a time";
         else if (raws.length === 1) {
           const id = binIdOf(raws[0]);
-          if (id) { try { navigator.vibrate && navigator.vibrate(60); } catch {} closeCam(); return openBin(id, !!openId); }
-          $("cam-tip").textContent = "That's not a bin label";
+          if (id) {
+            try { navigator.vibrate && navigator.vibrate(60); } catch {}
+            closeCam();
+            openBin(id, !!openId);
+            fileScannedBin(id);
+            return;
+          }
+          // A place label keeps the camera open: scan the place, then the bins.
+          const p = placeOf(raws[0]);
+          if (p && canWrite) {
+            if (p !== place) {
+              try { navigator.vibrate && navigator.vibrate(40); } catch {}
+              setPlace(p);
+            }
+            $("cam-tip").textContent = "Bins now go in: " + p + " — scan them";
+          } else {
+            $("cam-tip").textContent = p ? "This link can only look" : "That's not a bin label";
+          }
         }
       }
       if (cam === me) me.timer = setTimeout(tick, 120);
