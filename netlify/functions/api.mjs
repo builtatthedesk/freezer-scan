@@ -284,6 +284,14 @@ export default async (req) => {
   const canRead = canWrite || (!!process.env.READ_KEY && key === process.env.READ_KEY);
   if (!canRead) return json(401, { error: "This link is missing its key. Ask for the link again." });
 
+  // FROZEN=1 marks a copy that is no longer the real list: it still shows what it has,
+  // but nothing can change it, so an old bookmark can't quietly scan food into a list
+  // nobody reads. The demo is exempt -- it is how anyone tries the app, and it resets daily.
+  if (process.env.FROZEN === "1" && !demo && req.method !== "GET") {
+    return json(403, { error: process.env.FROZEN_NOTE
+      || "This copy is frozen and can't be changed. The live list moved — open your own link." });
+  }
+
   const store = getStore({ name: demo ? "freezer-demo" : "freezer", consistency: "strong" });
   const path = new URL(req.url).pathname.replace(/^\/api\/?/, "").split("/").filter(Boolean);
 
