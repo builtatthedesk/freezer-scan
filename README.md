@@ -79,6 +79,7 @@ Optional settings:
 
 - `TZ_NAME` is the time zone used to date label IDs, e.g. `America/New_York`. Default: `UTC`.
 - `DEMO=1` opens a shared sample list under the key `demo`, reset daily. The how-to page's demo buttons point at the original site's demo.
+- `FROZEN=1` retires a copy without deleting it: it still shows what it holds, but every write answers 403, so an old bookmark can't scan into a list nobody reads. The pages see `frozen: true` and open in view-only mode. `DEMO` is unaffected. `FROZEN_NOTE` replaces the message people see — use it to name where the list moved to.
 
 ## Scan log
 

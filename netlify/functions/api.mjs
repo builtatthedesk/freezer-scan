@@ -1,6 +1,6 @@
 // Freezer list API. The whole list is one JSON blob ({ id: item }), updated with
 // compare-and-swap on its etag so two phones scanning at once can't lose a write.
-//   GET    /api/items          read key or write key -> { items, at, canWrite }
+//   GET    /api/items          read key or write key -> { items, at, canWrite, frozen }
 //   PUT    /api/items/:id      write key, body = item
 //   DELETE /api/items/:id      write key
 //   POST   /api/ids            write key, body { n } -> { ids } fresh label IDs
@@ -287,7 +287,8 @@ export default async (req) => {
   // FROZEN=1 marks a copy that is no longer the real list: it still shows what it has,
   // but nothing can change it, so an old bookmark can't quietly scan food into a list
   // nobody reads. The demo is exempt -- it is how anyone tries the app, and it resets daily.
-  if (process.env.FROZEN === "1" && !demo && req.method !== "GET") {
+  const frozen = !demo && !!process.env.FROZEN && !/^(0|false|no|off)$/i.test(process.env.FROZEN.trim());
+  if (frozen && req.method !== "GET") {
     return json(403, { error: process.env.FROZEN_NOTE
       || "This copy is frozen and can't be changed. The live list moved — open your own link." });
   }
@@ -297,10 +298,10 @@ export default async (req) => {
 
   if (req.method === "GET" && path[0] === "items" && !path[1]) {
     const items = await readItems(store, demo);
-    return json(200, { items, at: new Date().toISOString(), canWrite, demo });
+    return json(200, { items, at: new Date().toISOString(), canWrite: canWrite && !frozen, frozen, demo });
   }
   if (req.method === "GET" && path[0] === "bins" && !path[1]) {
-    return json(200, { bins: await readBins(store, demo), at: new Date().toISOString(), canWrite, demo });
+    return json(200, { bins: await readBins(store, demo), at: new Date().toISOString(), canWrite: canWrite && !frozen, frozen, demo });
   }
   if (req.method === "GET" && path[0] === "photo" && ID_RE.test(path[1] || "") && ID_RE.test(path[2] || "") && !path[3]) {
     const size = new URL(req.url).searchParams.get("size") === "full" ? "full" : "thumb";
@@ -311,7 +312,7 @@ export default async (req) => {
   if (req.method === "GET" && path[0] === "history" && !path[1]) {
     if (demo) await readItems(store, demo);
     const { months, events } = await readHistory(store);
-    return json(200, { events, months, canWrite, demo });
+    return json(200, { events, months, canWrite: canWrite && !frozen, frozen, demo });
   }
   if (!canWrite) return json(403, { error: "This link can only view the list." });
   if (req.method === "DELETE" && path[0] === "history" && !path[1]) {
