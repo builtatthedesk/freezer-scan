@@ -360,10 +360,11 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     const flush = () => { if (cur.length) out.push(cur.join("\n")); cur = []; };
     lines.forEach((l, i) => {
       if (/^(LOC|CMD):/.test(l)) { flush(); out.push(l); return; }
+      if (/^ID:\d{6}-\d{3,}$/.test(l)) { flush(); out.push(l); return; }   // a backup code (no space after ID:) is a label of its own
       if (/^BIN:/.test(l)) flush();                // a bin label is BIN: name, then its ID
       cur.push(l);
       if (/ID:\s*\d{6}-\d{3,}/.test(l)) flush();
-      else if (/Printed:\s*\d{4}-\d{2}-\d{2}/.test(l) && !/^ID:/.test(lines[i + 1] || "")) flush();
+      else if (/Printed:\s*\d{4}-\d{2}-\d{2}/.test(l) && !/^ID:\s/.test(lines[i + 1] || "")) flush();
     });
     flush();
     return out;
@@ -404,7 +405,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     return !/Printed:|ID:/.test(t);
   }
   function onKey(e){
-    if (!armed || e.target === $("manual-in") || (e.target.closest && e.target.closest("#mover"))) return;
+    if (!armed || e.target === $("manual-in") || (e.target.closest && e.target.closest("#mover, #taker, #fzbox"))) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === "Enter") { buf += "\n"; e.preventDefault(); }
     else if (e.key === "Tab") { buf += "\n"; e.preventDefault(); }
@@ -451,7 +452,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
   showGap();
   document.addEventListener("keydown", onKey, true);
   document.addEventListener("paste", (e) => {
-    if (!armed || e.target === $("manual-in") || (e.target.closest && e.target.closest("#mover"))) return;
+    if (!armed || e.target === $("manual-in") || (e.target.closest && e.target.closest("#mover, #taker, #fzbox"))) return;
     const s = (e.clipboardData && e.clipboardData.getData("text")) || "";
     if (s) { e.preventDefault(); route(s, []); }
   });
@@ -581,8 +582,11 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
           // view for 4 s. Remembering every label seen (not just the last) stops two
           // labels in frame from taking turns. Keyed by label ID, so the big code and
           // the backup code of one label count once.
-          const seenAt = me.seen.get(idOf(raw));
-          me.seen.set(idOf(raw), now);
+          // A backup code for a pack not on the list yet is keyed by itself, so it can't
+          // block the big code (which adds the pack) from being read next.
+          const seenKey = /^ID:\d/.test(raw) && !items.has(idOf(raw)) ? raw : idOf(raw);
+          const seenAt = me.seen.get(seenKey);
+          me.seen.set(seenKey, now);
           if (seenAt === undefined || now - seenAt > 4000) {
             me.pauseUntil = now + 900;
             $("cam-aim").classList.add("hit"); setTimeout(() => $("cam-aim").classList.remove("hit"), 600);
