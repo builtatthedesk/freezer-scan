@@ -100,6 +100,7 @@
         <div id="date-box"><label for="date">Date</label><input id="date" type="date" required></div>
         <div><label for="copies">How many</label><input id="copies" type="number" min="1" max="50" value="1" inputmode="numeric"></div>
       </div>
+      <div id="fz-row" hidden style="margin-top:10px"><input type="checkbox" id="fz-keep" checked style="width:auto;margin:0 8px 0 0;vertical-align:middle"><span>Add it to the freezer list</span> <span style="color:#667">(untick for a storage-bin place like Attic)</span></div>
       <div class="btns"><button class="main" type="submit" id="make">Make labels</button></div>
       <p class="msg" id="msg" role="status"></p>
     </form>
@@ -182,6 +183,7 @@
     $("food-only").hidden = k !== "food" && k !== "bin";
     $("date-box").hidden = k === "bin";
     $("photo-row").hidden = k !== "food";
+    $("fz-row").hidden = k !== "loc";
     if (k !== "food") $("suggest").replaceChildren();
     $("date").required = k === "food";
     $("name-label").textContent = { food: "What's in it", loc: "Which freezer", cmd: "Label text", bin: "Bin name" }[k];
@@ -217,7 +219,25 @@
     return { size: 22, lines: [text.slice(0, 60)], lh: 25 };
   }
 
-  function drawLabel(payload, title, small){
+  // Backup code: a food label also carries a small QR of just "ID:<id>" (14 letters fit
+  // the smallest QR, 21 x 21 squares) at its right end, with the ID written under it, so
+  // a pack whose big code got scuffed in the freezer still scans. 5 dots a square
+  // = 0.42 mm, about 9 mm across: small, but well inside what the Tera and a phone read.
+  const BK_CELL = 5, BK_W = 150;
+  function drawBackup(ctx, payload, idText){
+    const qr = qrcode(0, "M"); qr.addData(payload, "Byte"); qr.make();
+    const n = qr.getModuleCount(), qs = n * BK_CELL;
+    const colX = W - PAD - BK_W, qx = colX + Math.floor((BK_W - qs) / 2);
+    const textH = 28, gap = 2 * BK_CELL, qy = Math.floor((H - qs - gap - textH) / 2);
+    ctx.fillStyle = "#000";
+    for (let r = 0; r < n; r++) for (let col = 0; col < n; col++)
+      if (qr.isDark(r, col)) ctx.fillRect(qx + col * BK_CELL, qy + r * BK_CELL, BK_CELL, BK_CELL);
+    ctx.font = `700 26px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+    ctx.fillText(idText, colX + BK_W / 2, qy + qs + gap + 24, BK_W);
+    ctx.textAlign = "start";
+  }
+  function drawLabel(payload, title, small, backup, idText){
     const c = document.createElement("canvas"); c.width = W; c.height = H;
     const ctx = c.getContext("2d");
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
@@ -228,7 +248,8 @@
     ctx.fillStyle = "#000";
     for (let r = 0; r < n; r++) for (let col = 0; col < n; col++)
       if (qr.isDark(r, col)) ctx.fillRect(qx + col * cell, qy + r * cell, cell, cell);
-    const x = PAD + side + PAD, maxW = W - x - PAD;
+    const x = PAD + side + PAD, maxW = W - x - PAD - (backup ? BK_W + PAD : 0);
+    if (backup) drawBackup(ctx, backup, idText);
     const smallH = small ? 56 : 0;
     const fit = fitLines(ctx, title, maxW, H - 2 * PAD - smallH, 700);
     const blockH = fit.lines.length * fit.lh + smallH;
@@ -280,7 +301,7 @@
   }
   function draw(l){
     l.size = media === "square" ? "23x23" : "29x90";
-    return media === "square" ? drawSquare(l.payload, l.title) : drawLabel(l.payload, l.title, l.small);
+    return media === "square" ? drawSquare(l.payload, l.title) : drawLabel(l.payload, l.title, l.small, l.backup, l.id);
   }
 
   function msg(t, err){ $("msg").textContent = t; $("msg").classList.toggle("err", !!err); }
@@ -374,8 +395,15 @@
     if (kind === "bin" && name.length > 76) return msg("Keep a bin name under 76 letters.", true);
     if ((kind === "food" || kind === "bin") && /^(LOC|CMD|BIN):/i.test(name)) return msg("A name can't start with LOC:, CMD: or BIN: (those mark freezer, command and bin labels).", true);
     if (/[^ -~]/.test(name)) return msg("Use plain letters only: most scanners can't type accents or emoji, so the name would come out garbled.", true);
-    let labels = [];
-    if (kind === "loc") labels = [{ payload: "LOC: " + name, title: name, small: "Scan me first", file: name }];
+    let labels = [], fzWarn = "";
+    if (kind === "loc") {
+      if (name.length > 60) return msg("Keep a freezer name under 60 letters.", true);
+      labels = [{ payload: "LOC: " + name, title: name, small: "Scan me first", file: name }];
+      if ($("fz-keep").checked && key) {
+        try { await api("PUT", "freezers", { name }); }
+        catch (err) { fzWarn = " But " + name + " didn't go on the freezer list (" + err.message + ")."; }
+      }
+    }
     else if (kind === "cmd") labels = [{ payload: "CMD: " + name.toUpperCase(), title: name.toUpperCase(), small: "", file: name }];
     else if (kind === "bin") {
       // "Christmas" x 5 -> Christmas 1..5, carrying on after any Christmas bins already made.
@@ -408,7 +436,7 @@
         const r = await fetch("api/ids", { method: "POST", headers: { "x-key": key, "content-type": "application/json" }, body: JSON.stringify({ n }) });
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
-        labels = j.ids.map(id => ({ payload: `${name}\nPrinted: ${date}\nID: ${id}`, title: name, small: prettyDate(date) + "  ·  " + id, file: name + " " + id }));
+        labels = j.ids.map(id => ({ payload: `${name}\nPrinted: ${date}\nID: ${id}`, backup: "ID:" + id, id, title: name, small: prettyDate(date), file: name + " " + id }));
       } catch (err) {
         $("make").disabled = false;
         return msg("Couldn't get label IDs (" + err.message + ").", true);
@@ -423,11 +451,11 @@
     renderMade();
     if (media === "paper") {
       const pages = pagesFor(made);
-      msg((restarted ? "Printed labels cleared. " : "") + `Added ${fresh.length}. ${made.length} label${made.length === 1 ? "" : "s"} on the sheet` + (pages > 1 ? ` (${pages} pages).` : "."));
+      msg((restarted ? "Printed labels cleared. " : "") + `Added ${fresh.length}. ${made.length} label${made.length === 1 ? "" : "s"} on the sheet` + (pages > 1 ? ` (${pages} pages).` : ".") + fzWarn, !!fzWarn);
       if (kind === "food" || kind === "bin") { $("name").value = ""; $("copies").value = "1"; $("name").focus(); }
     } else {
       const note = fresh.some(l => l.canvas.noText) ? " The name didn't fit, so it's just the code." : fresh.some(l => l.canvas.cut) ? " The name is cut short on the label; the code has all of it." : "";
-      msg((made.length === 1 ? "1 label ready." : made.length + " labels ready.") + note);
+      msg((made.length === 1 ? "1 label ready." : made.length + " labels ready.") + note + fzWarn, !!fzWarn);
       $("out").scrollIntoView({ behavior: "smooth", block: "start" });
     }
   });
@@ -504,6 +532,10 @@
   }
   $("clear").addEventListener("click", () => { made = []; printed = 0; renderMade(); msg("New sheet started."); });
   setMedia(media);
+
+  // "Print label" on the scanner's freezer list lands here as #loc=<name>.
+  const locHash = location.hash.match(/[#&]loc=([^&]+)/);
+  if (locHash) { setKind("loc"); try { $("name").value = decodeURIComponent(locHash[1]); } catch {} }
 
   // "Print this label again" on a bin's page lands here with its ID: same ID, same name.
   const reprint = location.hash.match(/[#&]reprint=([\w.:-]+)/);

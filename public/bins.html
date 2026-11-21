@@ -440,9 +440,9 @@
   async function knownFreezers(){
     if (freezerNames) return freezerNames;
     try {
-      const j = await api("GET", "items");
-      freezerNames = new Set(Object.values(j.items || {})
-        .map(i => tidyPlace(i.shelf || "").toLowerCase()).filter(Boolean));
+      const [j, f] = await Promise.all([api("GET", "items"), api("GET", "freezers").catch(() => ({}))]);
+      freezerNames = new Set(Object.values(j.items || {}).map(i => i.shelf || "").concat(Object.keys(f.freezers || {}))
+        .map(s => tidyPlace(s).toLowerCase()).filter(Boolean));
     } catch { freezerNames = new Set(); }    // can't tell -> don't block the scan
     return freezerNames;
   }
