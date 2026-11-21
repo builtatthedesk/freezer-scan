@@ -91,6 +91,17 @@ button:disabled{opacity:.5;cursor:default}
 .mover label.pick .w{grid-column:2/-1;font-family:var(--mono);font-size:.8rem;color:var(--mut)}
 .mover .row2{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .mover .row2 select{flex:1 1 180px;width:auto}
+.taker .food{display:block;width:100%;text-align:left;font:inherit;font-weight:600;padding:10px;border:0;border-top:1px solid var(--line);background:none;color:var(--ink);cursor:pointer}
+.taker .food:first-child{border-top:0}
+.taker .food .age{float:right}
+.taker .packs{display:grid;gap:6px;padding:4px 10px 10px}
+.taker .pack{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.taker .pack .m{font-family:var(--mono);font-size:.8rem;color:var(--mut);overflow-wrap:anywhere}
+.fzlist{display:grid;gap:2px;border:1px solid var(--line);border-radius:8px;padding:4px 0}
+.fzlist .fz{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 10px}
+.fzlist .fz b{flex:1 1 140px}
+.fzlist .fz .n{font-family:var(--mono);font-size:.8rem;color:var(--mut)}
+.group .item.empty-fz{color:var(--mut);font-style:italic}
 .group{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .group h3{margin:0;font:700 1.15rem var(--display);padding:10px 14px;background:var(--frost-soft);display:flex;justify-content:space-between;gap:8px}
 .group h3 .n{font-family:var(--mono);font-size:.85rem;font-weight:500;color:var(--mut)}
@@ -222,7 +233,26 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
 
   <section aria-label="What's in the freezer">
     <div class="top"><h2>What's where</h2><span class="state" id="totals"></span>
-      <button id="move-open" class="ghost" type="button" hidden>Move food without scanning</button></div>
+      <button id="take-open" class="ghost" type="button" hidden>Take out without scanning</button>
+      <button id="move-open" class="ghost" type="button" hidden>Move food without scanning</button>
+      <button id="fz-open" class="ghost" type="button" hidden>Freezers</button></div>
+    <div id="taker" class="mover taker" hidden>
+      <b>Take out without scanning</b>
+      <span class="note">For a pack whose label is gone or won't scan. Tap the food, then the pack you're holding (newest first).</span>
+      <input id="take-q" type="search" placeholder="Find food, e.g. salmon" autocomplete="off" aria-label="Find food to take out">
+      <div id="take-list" class="picks" role="group" aria-label="Food to take out"></div>
+      <div class="row2"><button id="take-done" class="primary" type="button">Done</button></div>
+    </div>
+    <div id="fzbox" class="mover" hidden>
+      <b>Your freezers</b>
+      <div id="fz-list" class="fzlist"></div>
+      <form id="fz-add" class="row2" autocomplete="off">
+        <input id="fz-name" type="search" placeholder="New freezer, e.g. Basement freezer" maxlength="60" aria-label="New freezer name" style="flex:1 1 200px;width:auto">
+        <button class="primary" type="submit">Add</button>
+      </form>
+      <span class="note" id="fz-msg">A freezer stays on the list even when it's empty. Print its label and stick it on the door; scan it before scanning food in.</span>
+      <div class="row2"><button id="fz-done" class="ghost" type="button">Done</button></div>
+    </div>
     <div id="mover" class="mover" hidden>
       <b>Move to another freezer</b>
       <input id="move-q" type="search" placeholder="Find food, e.g. salmon" autocomplete="off" aria-label="Find food to move">
@@ -330,10 +360,11 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     const flush = () => { if (cur.length) out.push(cur.join("\n")); cur = []; };
     lines.forEach((l, i) => {
       if (/^(LOC|CMD):/.test(l)) { flush(); out.push(l); return; }
+      if (/^ID:\d{6}-\d{3,}$/.test(l)) { flush(); out.push(l); return; }   // a backup code (no space after ID:) is a label of its own
       if (/^BIN:/.test(l)) flush();                // a bin label is BIN: name, then its ID
       cur.push(l);
       if (/ID:\s*\d{6}-\d{3,}/.test(l)) flush();
-      else if (/Printed:\s*\d{4}-\d{2}-\d{2}/.test(l) && !/^ID:/.test(lines[i + 1] || "")) flush();
+      else if (/Printed:\s*\d{4}-\d{2}-\d{2}/.test(l) && !/^ID:\s/.test(lines[i + 1] || "")) flush();
     });
     flush();
     return out;
@@ -374,7 +405,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     return !/Printed:|ID:/.test(t);
   }
   function onKey(e){
-    if (!armed || e.target === $("manual-in") || (e.target.closest && e.target.closest("#mover"))) return;
+    if (!armed || e.target === $("manual-in") || (e.target.closest && e.target.closest("#mover, #taker, #fzbox"))) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === "Enter") { buf += "\n"; e.preventDefault(); }
     else if (e.key === "Tab") { buf += "\n"; e.preventDefault(); }
@@ -421,7 +452,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
   showGap();
   document.addEventListener("keydown", onKey, true);
   document.addEventListener("paste", (e) => {
-    if (!armed || e.target === $("manual-in") || (e.target.closest && e.target.closest("#mover"))) return;
+    if (!armed || e.target === $("manual-in") || (e.target.closest && e.target.closest("#mover, #taker, #fzbox"))) return;
     const s = (e.clipboardData && e.clipboardData.getData("text")) || "";
     if (s) { e.preventDefault(); route(s, []); }
   });
@@ -538,6 +569,10 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
         try { raws = await read(video); } catch {}
         if (cam !== me) return;
         const now = Date.now();
+        // A food label carries two codes (the full one and a small ID-only backup):
+        // both in view are still one label, so keep the fuller one.
+        const idOf = (r) => (r.match(/ID:\s*(\d{6}-\d{3,})/) || [])[1] || r;
+        if (raws.length > 1 && new Set(raws.map(idOf)).size === 1) raws = [raws.sort((a, b) => b.length - a.length)[0]];
         if (raws.length > 1) {
           $("cam-tip").textContent = "One label at a time";
         } else if (raws.length === 1) {
@@ -545,9 +580,13 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
           const raw = raws[0];
           // A label stays in view for a while: count it once until it has been out of
           // view for 4 s. Remembering every label seen (not just the last) stops two
-          // labels in frame from taking turns.
-          const seenAt = me.seen.get(raw);
-          me.seen.set(raw, now);
+          // labels in frame from taking turns. Keyed by label ID, so the big code and
+          // the backup code of one label count once.
+          // A backup code for a pack not on the list yet is keyed by itself, so it can't
+          // block the big code (which adds the pack) from being read next.
+          const seenKey = /^ID:\d/.test(raw) && !items.has(idOf(raw)) ? raw : idOf(raw);
+          const seenAt = me.seen.get(seenKey);
+          me.seen.set(seenKey, now);
           if (seenAt === undefined || now - seenAt > 4000) {
             me.pauseUntil = now + 900;
             $("cam-aim").classList.add("hit"); setTimeout(() => $("cam-aim").classList.remove("hit"), 600);
@@ -666,6 +705,10 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     if (!writable) return show("err", "You can't change this list", p.text, "Ask the owner for edit access");
     const id = docIdFor(p);
     const before = items.get(id) || null;
+    if (p.id && !p.printed && p.text === "(no words)") {   // the small backup code: just the ID
+      if (!before) return show("err", "Backup code: not on your list", "ID " + p.id, "Scan the big code once, or use Take out without scanning");
+      p.text = before.text; p.printed = before.printed;
+    }
     const now = new Date().toISOString();
     const meta = [p.id ? "ID " + p.id : "no ID on label", p.printed ? "printed " + p.printed : null].filter(Boolean).join(" · ");
 
@@ -739,8 +782,8 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     if ($("mover").hidden) return;
     const q = $("move-q").value.trim().toLowerCase();
     const foods = moveFoods();
-    const freezers = [...new Set([...items.values()].map(it => it.shelf).filter(Boolean).concat(shelf ? [shelf] : []))].sort((a, b) => a.localeCompare(b));
-    const sig = JSON.stringify([q, foods.map(f => [f.key, f.ids.length, [...f.where]]), freezers]);
+    const fzNames = allFreezers();
+    const sig = JSON.stringify([q, foods.map(f => [f.key, f.ids.length, [...f.where]]), fzNames]);
     if (!force && sig === moverSig) return updateMoveBtn();   // a poll with nothing new: keep scroll and focus
     moverSig = sig;
     const box = $("move-picks"); box.replaceChildren();
@@ -756,7 +799,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     }
     if (!box.children.length) { const e = document.createElement("p"); e.className = "note"; e.style.padding = "6px 10px"; e.textContent = q ? "No food matches." : "Nothing in the freezers."; box.append(e); }
     const keep = $("move-to").value;
-    const names = freezers;
+    const names = fzNames;
     const sel = $("move-to"); sel.replaceChildren();
     for (const nm of names) sel.append(new Option(nm, nm));
     sel.append(new Option("Another freezer…", "__new"));
@@ -805,6 +848,118 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     show("moved", `Moved ${ids.length} pack${ids.length === 1 ? "" : "s"} to ${to}`, one ? one.name : movedFoods.size + " foods", "Undo puts them back");
   });
 
+  // ---------------------------------------------------------------- freezers
+  // The freezer list lives on the server (/api/freezers), so an empty freezer still
+  // shows and every phone sees the same list. A freezer with food in it shows anyway.
+  let freezers = new Set();
+  const keyNow = () => (location.hash.match(/[#&]w=([\w-]+)/) || [])[1] || LS.get("fs.key");
+  async function fzApi(method, body){
+    const r = await fetch("api/freezers", { method, headers: { "x-key": keyNow() || "", "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
+    freezers = new Set(Object.keys(j.freezers || {}));
+    render();
+  }
+  const loadFreezers = () => { if (!window.claude && keyNow()) fzApi("GET").catch(() => {}); };
+  const tidyFz = (v) => String(v || "").replace(/\s+/g, " ").trim().slice(0, 60);
+  function allFreezers(){
+    const m = new Map();      // lower-case -> name as written
+    for (const n of [...freezers, ...[...items.values()].map(it => it.shelf).filter(Boolean), ...(shelf ? [shelf] : [])])
+      if (!m.has(n.toLowerCase())) m.set(n.toLowerCase(), n);
+    return [...m.values()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }
+  const labelLink = (name) => "label.html" + (keyNow() ? "#w=" + keyNow() + "&" : "#") + "loc=" + encodeURIComponent(name);
+  function renderFreezers(){
+    if ($("fzbox").hidden) return;
+    const box = $("fz-list"); box.replaceChildren();
+    const saved = new Set([...freezers].map(n => n.toLowerCase()));
+    for (const name of allFreezers()) {
+      const n = [...items.values()].filter(it => it.status === "in" && (it.shelf || "").toLowerCase() === name.toLowerCase()).length;
+      const row = document.createElement("div"); row.className = "fz";
+      const b = document.createElement("b"); b.textContent = name;
+      const c = document.createElement("span"); c.className = "n"; c.textContent = n ? n + " in" : "empty";
+      const pr = document.createElement("a"); pr.href = labelLink(name); pr.textContent = "Print label";
+      row.append(b, c, pr);
+      if (!saved.has(name.toLowerCase())) {
+        const add = document.createElement("button"); add.type = "button"; add.className = "ghost"; add.textContent = "Keep on list";
+        add.title = "Keep this freezer listed even when it's empty";
+        add.addEventListener("click", () => fzApi("PUT", { name }).catch(e => fzMsg("Couldn't save: " + e.message)));
+        row.append(add);
+      } else if (!n) {
+        const rm = document.createElement("button"); rm.type = "button"; rm.className = "ghost"; rm.textContent = "Remove";
+        rm.addEventListener("click", () => { if (confirm("Take " + name + " off the list?")) fzApi("PUT", { name, remove: true }).catch(e => fzMsg("Couldn't remove: " + e.message)); });
+        row.append(rm);
+      }
+      box.append(row);
+    }
+    if (!box.children.length) { const e = document.createElement("p"); e.className = "note"; e.style.padding = "6px 10px"; e.textContent = "No freezers yet. Add one below."; box.append(e); }
+  }
+  const fzMsg = (t) => { $("fz-msg").textContent = t; };
+  $("fz-open").addEventListener("click", () => { $("fzbox").hidden = false; $("fz-open").hidden = true; loadFreezers(); renderFreezers(); });
+  $("fz-done").addEventListener("click", () => { $("fzbox").hidden = true; render(); });
+  $("fz-add").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = tidyFz($("fz-name").value);
+    if (!name) return;
+    if (/^(LOC|CMD|BIN):/i.test(name) || /[^ -~]/.test(name)) return fzMsg("Use plain letters (no LOC:, accents or emoji): the scanner has to type it.");
+    try { await fzApi("PUT", { name }); } catch (err) { return fzMsg("Couldn't add it: " + err.message); }
+    $("fz-name").value = "";
+    fzMsg("Added " + name + ". Tap Print label next to it to make its door label.");
+  });
+
+  // ---------------------------------------------------------------- take out without scanning
+  // A pack whose label fell off or won't scan: find the food, see every pack of it
+  // (newest first, with date, freezer and ID), and tap the one in your hand.
+  let takeOpen = null;              // food key whose packs are showing
+  const dayOf = (it) => it.printed || (it.firstSeen || "").slice(0, 10);
+  const prettyDay = (d) => new Date(d + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  function renderTaker(){
+    if ($("taker").hidden) return;
+    const q = $("take-q").value.trim().toLowerCase();
+    const box = $("take-list"), keepScroll = box.scrollTop; box.replaceChildren();
+    for (const f of moveFoods()) {
+      if (q && !f.key.includes(q) && takeOpen !== f.key) continue;
+      const btn = document.createElement("button"); btn.type = "button"; btn.className = "food";
+      btn.setAttribute("aria-expanded", String(takeOpen === f.key));
+      const n = document.createElement("span"); n.className = "age"; n.textContent = "×" + f.ids.length;
+      btn.append((takeOpen === f.key ? "▾ " : "▸ ") + f.name, n);
+      btn.addEventListener("click", () => { takeOpen = takeOpen === f.key ? null : f.key; renderTaker(); });
+      box.append(btn);
+      if (takeOpen !== f.key) continue;
+      const packs = document.createElement("div"); packs.className = "packs";
+      const list = f.ids.map(id => [id, items.get(id)])
+        .sort((a, b) => (dayOf(b[1]) || "").localeCompare(dayOf(a[1]) || "") || (b[1].inAt || "").localeCompare(a[1].inAt || ""));
+      for (const [id, it] of list) {
+        const row = document.createElement("div"); row.className = "pack";
+        const t = document.createElement("span"); t.className = "t";
+        const [, age] = ageLabel(ageOf(it));
+        t.textContent = (dayOf(it) ? prettyDay(dayOf(it)) : "No date") + " · " + age + " old";
+        const go = document.createElement("button"); go.type = "button"; go.className = "primary"; go.textContent = "Take out";
+        go.addEventListener("click", () => takeOut(id));
+        const m = document.createElement("span"); m.className = "m";
+        m.textContent = [it.text !== f.name ? it.text : null, it.shelf || "no freezer set", it.labelId ? "ID " + it.labelId : "no ID"].filter(Boolean).join(" · ");
+        row.append(t, go, m); packs.append(row);
+      }
+      box.append(packs);
+    }
+    if (!box.children.length) { const e = document.createElement("p"); e.className = "note"; e.style.padding = "6px 10px"; e.textContent = q ? "No food matches." : "Nothing in the freezers."; box.append(e); }
+    box.scrollTop = keepScroll;
+  }
+  function takeOut(id){
+    const before = items.get(id);
+    if (!before || before.status !== "in") return renderTaker();
+    if (!db || !writable) return show("err", "You can't change this list", before.text, "Open the page from your scanning link");
+    save(id, before, Object.assign({}, before, { status: "out", outAt: new Date().toISOString() }), true);   // not a scan, so lastScan stays
+    render();
+    show("out", "Taken out", before.text, [before.labelId ? "ID " + before.labelId : "no ID", "was in " + (before.shelf || "no freezer set"), "Undo puts it back"].join(" · "));
+  }
+  $("take-open").addEventListener("click", () => {
+    takeOpen = null; $("take-q").value = ""; $("taker").hidden = false; $("take-open").hidden = true;
+    renderTaker(); $("take-q").focus();
+  });
+  $("take-done").addEventListener("click", () => { $("taker").hidden = true; render(); });
+  $("take-q").addEventListener("input", () => { takeOpen = null; renderTaker(); });
+
   // ---------------------------------------------------------------- render
   function ageOf(it){
     const d = it.printed || (it.firstSeen || "").slice(0, 10);
@@ -839,15 +994,20 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
   }
   function render(){
     renderAudit();
-    $("move-open").hidden = !db || !writable || !!window.claude || !$("mover").hidden || ![...items.values()].some(it => it.status === "in");
-    renderMover();
+    const canEdit = !!db && writable && !window.claude, anyIn = [...items.values()].some(it => it.status === "in");
+    $("move-open").hidden = !canEdit || !$("mover").hidden || !anyIn;
+    $("take-open").hidden = !canEdit || !$("taker").hidden || !anyIn;
+    $("fz-open").hidden = !canEdit || !$("fzbox").hidden;
+    renderMover(); renderTaker(); renderFreezers();
     const inv = $("inv");
     const live = [...items].filter(([, it]) => it.status === "in");
     const used = [...items].filter(([, it]) => it.status === "out");
     $("totals").textContent = items.size ? live.length + " in · " + used.length + " used" : "";
-    if (!items.size) return;
+    if (!items.size && !freezers.size) return;
     const groups = new Map();
     for (const [id, it] of live){ const k = it.shelf || "In the freezer"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push([id, it]); }
+    const inUse = new Set([...groups.keys()].map(k => k.toLowerCase()));
+    for (const f of freezers) if (!inUse.has(f.toLowerCase())) groups.set(f, []);   // a saved freezer with nothing in it
     const frag = document.createDocumentFragment();
     for (const name of [...groups.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))){
       const g = document.createElement("div"); g.className = "group";
@@ -856,6 +1016,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
       h.append(name); const n = document.createElement("span"); n.className = "n"; n.textContent = list.length + " item" + (list.length === 1 ? "" : "s"); h.append(n);
       g.append(h);
       for (const [id, it] of list) g.append(itemRow(id, it));
+      if (!list.length) { const e = document.createElement("div"); e.className = "item empty-fz"; e.textContent = "Empty"; g.append(e); }
       frag.append(g);
     }
     if (used.length){
@@ -980,6 +1141,8 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     if (!db){ clearTimeout(loading); if (window.claude) $("sync").textContent = "Not connected: open this page on claude.ai, signed in, to save scans."; $("sync").classList.add("err"); return; }
     if (window.claude) try { const user = await window.claude.use("user"); if (user && (await user.can("data.write")) === false) writable = false; } catch {}
     flushLog();
+    loadFreezers();
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) loadFreezers(); });
     db.collection("items").onSnapshot((snap) => {
       if (!snap.metadata.fromCache) clearTimeout(loading);
       const next = new Map();

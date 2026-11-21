@@ -16,6 +16,9 @@
 //   POST   /api/bins/:id/photos          write key, body { full, thumb } as JPEG data URLs
 //   DELETE /api/bins/:id/photos/:pid     write key
 //   GET    /api/photo/:id/:pid?size=thumb|full   read key -> image/jpeg
+// Freezers (the list of freezers, so an empty one still shows): one JSON blob { name: { addedAt } }.
+//   GET    /api/freezers                 read key -> { freezers, canWrite }
+//   PUT    /api/freezers                 write key, body { name } adds it, { name, remove: true } takes it off
 // Backup (public/backup.html; same file format as the offline edition):
 //   GET    /api/backup                   write key -> everything except photo data
 //   POST   /api/restore                  write key, body = a backup, merged in (see restore())
@@ -128,6 +131,23 @@ async function readBins(store, demo){
   return bins;
 }
 
+// A freezer's name: what a LOC: label says, tidied the same way everywhere (60 letters).
+const tidyFreezer = (v) => typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, 60) : "";
+const BAD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+function cleanFreezers(f){
+  const out = {};
+  for (const [name, v] of Object.entries(f && typeof f === "object" && !Array.isArray(f) ? f : {})) {
+    const n = tidyFreezer(name);
+    if (!n || BAD_KEYS.has(n) || n !== name) continue;
+    out[n] = { addedAt: v && typeof v.addedAt === "string" ? v.addedAt.slice(0, 40) : "" };
+  }
+  return out;
+}
+async function readFreezers(store, demo){
+  if (demo) await readItems(store, demo);
+  return cleanFreezers(await store.get("freezers", { type: "json" }));
+}
+
 async function readItems(store, demo){
   if (!demo) return (await store.get("items", { type: "json" })) || {};
   const cur = await store.getWithMetadata("items", { type: "json" });
@@ -137,6 +157,7 @@ async function readItems(store, demo){
   await store.setJSON("items", items, { metadata: { seeded: new Date().toISOString() } });
   const { blobs } = await store.list({ prefix: "history/" });     // yesterday's demo history goes too
   for (const b of blobs) await store.delete(b.key);
+  await store.delete("freezers");
   return items;
 }
 
@@ -255,6 +276,14 @@ async function restore(store, b){
     }
   });
   if (stop) return stop;
+  const inFreezers = cleanFreezers(b.freezers);
+  if (Object.keys(inFreezers).length) {
+    stop = await updateJson(store, "freezers", (f) => {
+      const low = new Set(Object.keys(f).map(n => n.toLowerCase()));
+      for (const [n, v] of Object.entries(inFreezers)) if (!low.has(n.toLowerCase())) { f[n] = v; low.add(n.toLowerCase()); }
+    });
+    if (stop) return stop;
+  }
   // Only website counters (5001 up, below the offline edition's 7001) count: a phone's
   // label numbers never meet the website's, so its counters don't belong here.
   const days = Object.entries(b.ids && typeof b.ids === "object" ? b.ids : {})
@@ -293,6 +322,9 @@ export default async (req) => {
   }
   if (req.method === "GET" && path[0] === "bins" && !path[1]) {
     return json(200, { bins: await readBins(store, demo), at: new Date().toISOString(), canWrite, demo });
+  }
+  if (req.method === "GET" && path[0] === "freezers" && !path[1]) {
+    return json(200, { freezers: await readFreezers(store, demo), canWrite, demo });
   }
   if (req.method === "GET" && path[0] === "photo" && ID_RE.test(path[1] || "") && ID_RE.test(path[2] || "") && !path[3]) {
     const size = new URL(req.url).searchParams.get("size") === "full" ? "full" : "thumb";
@@ -345,6 +377,21 @@ export default async (req) => {
       }
     }
     return json(409, { error: "busy, try again" });
+  }
+
+  if (req.method === "PUT" && path[0] === "freezers" && !path[1]) {
+    const b = await readJson(req);
+    const name = tidyFreezer(b && b.name);
+    if (!name || BAD_KEYS.has(name)) return json(400, { error: "A freezer needs a name (60 letters at most)." });
+    if (demo) await readItems(store, demo);
+    const stop = await updateJson(store, "freezers", (f) => {
+      const same = Object.keys(f).find(n => n.toLowerCase() === name.toLowerCase());   // "garage freezer" = "Garage Freezer"
+      if (b.remove) { if (same) delete f[same]; return; }
+      if (same) return;
+      if (demo && Object.keys(f).length >= 20) return json(400, { error: "The demo has enough freezers." });
+      f[name] = { addedAt: new Date().toISOString() };
+    });
+    return stop || json(200, { ok: true, freezers: await readFreezers(store, demo) });
   }
 
   if (path[0] === "bins" && ID_RE.test(path[1] || "")) {
@@ -443,14 +490,14 @@ export default async (req) => {
   }
 
   if (req.method === "GET" && path[0] === "backup" && !path[1]) {
-    const [items, bins, { blobs }] = await Promise.all([readItems(store, demo), readBins(store, demo), store.list({ prefix: "ids/" })]);
+    const [items, bins, freezers, { blobs }] = await Promise.all([readItems(store, demo), readBins(store, demo), readFreezers(store, false), store.list({ prefix: "ids/" })]);
     const ids = {};
     await Promise.all(blobs.map(async (b) => {
       const day = b.key.slice(4), c = /^\d{6}$/.test(day) && await store.get(b.key, { type: "json" });
       if (c && Number(c.next) > 0) ids[day] = Number(c.next);
     }));
     const { events: history } = await readHistory(store);
-    return json(200, { app: "freezer-scan", kind: "backup", version: 1, at: new Date().toISOString(), items, bins, ids, history });
+    return json(200, { app: "freezer-scan", kind: "backup", version: 1, at: new Date().toISOString(), items, bins, freezers, ids, history });
   }
   if (req.method === "POST" && path[0] === "restore" && !path[1]) {
     if (demo) return json(403, { error: "Restoring is turned off in the demo." });

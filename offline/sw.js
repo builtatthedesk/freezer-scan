@@ -10,7 +10,7 @@
 //                                (the page adds the photos one by one; see public/backup.html)
 //   POST /api/restore            merge a backup's labels, bins and counters in
 //   PUT  /api/restore-photo/:bin/:pid/:size   one photo from a backup, if missing here
-// and the website's history routes (GET /api/history, DELETE /api/history?before=YYYY-MM).
+// and the website's freezer-list and history routes (GET/PUT /api/freezers, GET /api/history, DELETE /api/history?before=YYYY-MM).
 // Every saved item gets a "modAt" stamp, so a restore can tell which copy of a label
 // was changed last, even for changes that aren't scans (marked used, moved freezer).
 "use strict";
@@ -88,6 +88,18 @@ const json = (status, body) => new Response(JSON.stringify(body), {
 const readJson = (req) => req.json().catch(() => undefined);
 const ID_RE = /^[\w.:-]{1,80}$/;
 const ITEM_FIELDS = ["text", "labelId", "printed", "shelf", "status", "inAt", "outAt", "firstSeen", "lastScan"];
+// Freezers: { name: { addedAt } }, same rules as netlify/functions/api.mjs.
+const tidyFreezer = (v) => typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, 60) : "";
+const BAD_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+function cleanFreezers(f){
+  const out = {};
+  for (const [name, v] of Object.entries(f && typeof f === "object" && !Array.isArray(f) ? f : {})) {
+    const n = tidyFreezer(name);
+    if (!n || BAD_KEYS.has(n) || n !== name) continue;
+    out[n] = { addedAt: v && typeof v.addedAt === "string" ? v.addedAt.slice(0, 40) : "" };
+  }
+  return out;
+}
 function cleanItem(body){
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
   const out = {};
@@ -138,6 +150,19 @@ async function api(req, url, rest){
   if (M === "POST" && path[0] === "suggest")
     return json(501, { error: "Photo suggestions need the internet, so they aren't in the offline edition. Type the name in." });
 
+  if (M === "GET" && path[0] === "freezers" && !path[1])
+    return json(200, { freezers: cleanFreezers(await kvGet("freezers")), canWrite: true });
+  if (M === "PUT" && path[0] === "freezers" && !path[1]) {
+    const b = await readJson(req);
+    const name = tidyFreezer(b && b.name);
+    if (!name || BAD_KEYS.has(name)) return json(400, { error: "A freezer needs a name (60 letters at most)." });
+    await kvUpdate("freezers", (f) => {
+      const same = Object.keys(f).find(n => n.toLowerCase() === name.toLowerCase());
+      if (b.remove) { if (same) delete f[same]; return; }
+      if (!same) f[name] = { addedAt: now };
+    });
+    return json(200, { ok: true, freezers: cleanFreezers(await kvGet("freezers")) });
+  }
   if (path[0] === "items" && path[1] && ID_RE.test(path[1]) && !path[2] && (M === "PUT" || M === "DELETE")) {
     const body = M === "PUT" ? cleanItem(await readJson(req)) : null;
     if (M === "PUT" && !body) return json(400, { error: "bad item" });
@@ -257,8 +282,8 @@ async function api(req, url, rest){
 
 // ------------------------------------------------------------------ backup / restore
 async function backup(now){
-  const [items, bins, ids, h] = await Promise.all([kvGet("items"), kvGet("bins"), kvGet("ids"), readHistory()]);
-  return { app: "freezer-scan", kind: "backup", version: 1, at: now, items: items || {}, bins: bins || {}, ids: ids || {}, history: h.events };
+  const [items, bins, ids, h, freezers] = await Promise.all([kvGet("items"), kvGet("bins"), kvGet("ids"), readHistory(), kvGet("freezers")]);
+  return { app: "freezer-scan", kind: "backup", version: 1, at: now, items: items || {}, bins: bins || {}, freezers: cleanFreezers(freezers), ids: ids || {}, history: h.events };
 }
 
 // Merge, never wipe: a label already on this phone keeps whichever copy was changed
@@ -308,6 +333,11 @@ async function restore(b){
       merged.photos = (have.photos || []).concat(bin.photos.filter(p => !ids.has(p.id))).slice(0, MAX_PHOTOS);
       bins[id] = merged;
     }
+  });
+  const inFreezers = cleanFreezers(b.freezers);
+  if (Object.keys(inFreezers).length) await kvUpdate("freezers", (f) => {
+    const low = new Set(Object.keys(f).map(n => n.toLowerCase()));
+    for (const [n, v] of Object.entries(inFreezers)) if (!low.has(n.toLowerCase())) { f[n] = v; low.add(n.toLowerCase()); }
   });
   // Label counters never go backwards, so new labels can't reuse a restored ID. Only
   // phone counters (7001 up) count: the website's (5001 up) never meet this phone's.
