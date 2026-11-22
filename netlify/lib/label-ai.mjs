@@ -15,9 +15,10 @@ const SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["name", "count", "date"],
+        required: ["name", "brand", "count", "date"],
         properties: {
           name: { type: "string", description: "Short label text a person would write, e.g. 'Chicken thighs' or 'Beef stew'" },
+          brand: { type: ["string", "null"], description: "Brand or maker printed on the pack, e.g. 'Omaha Steaks', else null" },
           count: { type: "integer", description: "How many separate packs of this food are visible" },
           date: { type: ["string", "null"], description: "YYYY-MM-DD if a pack, freeze or made-on date is written on it, else null" },
         },
@@ -28,7 +29,8 @@ const SCHEMA = {
 
 const PROMPT = `This photo shows food going into (or found in) a home freezer, most of it not yet labelled.
 List each distinct food so a label can be printed for it.
-- name: what a person would write on the label, 1-4 words, plain and specific ("Ground beef", "Chicken soup", "Blueberries"). Use the brand or product name only if that's how people would know it. Never a sentence.
+- name: what a person would write on the label, 1-4 words, plain and specific ("Ground beef", "Chicken soup", "Ribeye steaks"). Leave the brand out of the name. Never a sentence.
+- brand: the brand or maker printed on the box or bag ("Omaha Steaks", "Trader Joe's"), as written on the pack; null if there is none or it's home-packed.
 - count: how many separate packs/bags/containers of that same food you can see (at least 1).
 - date: only if a date is actually written or printed on the pack as a packed, frozen or made-on date (handwriting counts), as YYYY-MM-DD; a best-by/use-by date or no date at all -> null. Assume the current year is ${new Date().getFullYear()} if a handwritten date has no year.
 Skip things that are not food. If you can't tell what something is, give your best plain guess ("Leftovers", "Frozen meat") rather than leaving it out.`;
@@ -59,7 +61,7 @@ export function labelAiReady(){
   return p === "claude" ? !!process.env.ANTHROPIC_API_KEY : !!PROVIDERS[p];
 }
 
-// -> [{ name, count, date|null }], cleaned so the page can trust it.
+// -> [{ name, brand|null, count, date|null }], cleaned so the page can trust it.
 export async function suggestLabels(jpegBase64){
   const run = PROVIDERS[process.env.LABEL_AI || "claude"];
   if (!run) throw new Error("Unknown LABEL_AI provider.");
@@ -67,6 +69,7 @@ export async function suggestLabels(jpegBase64){
   const items = Array.isArray(out && out.items) ? out.items : [];
   return items.slice(0, 20).map(i => ({
     name: String(i.name || "").replace(/\s+/g, " ").trim().slice(0, 60),
+    brand: (String(i.brand || "").replace(/\s+/g, " ").trim().slice(0, 40) || null),
     count: Math.min(50, Math.max(1, parseInt(i.count, 10) || 1)),
     date: /^\d{4}-\d{2}-\d{2}$/.test(i.date || "") ? i.date : null,
   })).filter(i => i.name && !/^(LOC|CMD|BIN):/i.test(i.name));

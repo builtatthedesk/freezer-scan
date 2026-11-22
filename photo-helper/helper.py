@@ -5,7 +5,7 @@ page sends, and answers with the foods it sees. Meant to sit behind
 `tailscale serve` so only phones on your tailnet can reach it.
 
     POST /suggest   header x-key: <WRITE_KEY>   body {"image": "data:image/jpeg;base64,..."}
-                    -> {"items": [{"name", "count", "date"}]}
+                    -> {"items": [{"name", "brand", "count", "date"}]}
     POST /print     header x-key   body {"image": "data:image/png;base64,..."}  (one finished label)
                     optional "printer": one of LABEL_PRINTER (default: the first)
                     -> {"ok": true, "printer": ...}  printed with label-print
@@ -213,11 +213,12 @@ KEY = write_key()
 
 PROMPT = """Read the photo at {path}. It shows food going into (or found in) a home freezer, most of it not yet labelled.
 List each distinct food so a label can be printed for it.
-- name: what a person would write on the label, 1-4 words, plain and specific ("Ground beef", "Chicken soup", "Blueberries"). Brand or product name only if that's how people would know it. Never a sentence.
+- name: what a person would write on the label, 1-4 words, plain and specific ("Ground beef", "Chicken soup", "Ribeye steaks"). Leave the brand out of the name. Never a sentence.
+- brand: the brand or maker printed on the box or bag ("Omaha Steaks", "Trader Joe's", "Costco Kirkland"), as written on the pack; null if there is none or it's home-packed.
 - count: how many separate packs/bags/containers of that same food you can see (at least 1).
 - date: only if a date is actually written or printed on the pack as a packed, frozen or made-on date (handwriting counts), as YYYY-MM-DD; a best-by/use-by date or no date at all -> null. If a handwritten date has no year, assume {year}.
 Skip things that are not food. If you can't tell what something is, give a plain best guess ("Leftovers", "Frozen meat").
-Reply with ONLY this JSON, nothing else: {{"items": [{{"name": "...", "count": 1, "date": null}}]}}"""
+Reply with ONLY this JSON, nothing else: {{"items": [{{"name": "...", "brand": null, "count": 1, "date": null}}]}}"""
 
 
 def origin_ok(origin: str) -> bool:
@@ -277,7 +278,10 @@ def ask_claude(jpeg: bytes) -> list[dict]:
         except (TypeError, ValueError):
             count = 1
         date = i.get("date") if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(i.get("date") or "")) else None
-        out.append({"name": name, "count": count, "date": date})
+        brand = re.sub(r"\s+", " ", str(i.get("brand") or "")).strip()[:40] or None
+        if brand and re.match(r"^(LOC|CMD|BIN|ID|Printed):", brand, re.I):
+            brand = None
+        out.append({"name": name, "brand": brand, "count": count, "date": date})
     return out
 
 
