@@ -96,6 +96,8 @@
         <input type="file" id="photo-file" accept="image/*" capture="environment" hidden>
       </div>
       <div class="suggest" id="suggest" role="group" aria-label="Suggested labels"></div>
+      <div id="brand-box"><label for="brand">Brand <span style="font-weight:400">(optional, at the end of the long label; in the code on squares)</span></label>
+      <input id="brand" autocomplete="off" placeholder="e.g. Omaha Steaks" maxlength="40"></div>
       <div class="two" id="food-only">
         <div id="date-box"><label for="date">Date</label><input id="date" type="date" required></div>
         <div><label for="copies">How many</label><input id="copies" type="number" min="1" max="50" value="1" inputmode="numeric"></div>
@@ -183,6 +185,8 @@
     $("food-only").hidden = k !== "food" && k !== "bin";
     $("date-box").hidden = k === "bin";
     $("photo-row").hidden = k !== "food";
+    $("brand-box").hidden = k !== "food";
+    $("brand").value = "";
     $("fz-row").hidden = k !== "loc";
     if (k !== "food") $("suggest").replaceChildren();
     $("date").required = k === "food";
@@ -256,7 +260,7 @@
     let y = (H - blockH) / 2 + fit.size * 0.9;
     ctx.textBaseline = "alphabetic";
     for (const line of fit.lines){ ctx.fillText(line, x, y); y += fit.lh; }
-    if (small){ ctx.font = `500 40px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`; ctx.fillText(small, x, y - fit.lh + 58); }
+    if (small){ ctx.font = `500 40px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`; ctx.fillText(small, x, y - fit.lh + 58, maxW); }
     return c;
   }
 
@@ -339,8 +343,11 @@
     if (!r.ok) throw new Error(j.error || "Photo helper said HTTP " + r.status);
     return j;
   }
+  // Scanners type plain ASCII only: "Häagen-Dazs" -> "Haagen-Dazs".
+  const plain = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^ -~]/g, "").replace(/\s+/g, " ").trim();
   function useSuggestion(s, chip){
-    $("name").value = s.name;
+    $("name").value = plain(s.name);
+    $("brand").value = plain(s.brand);
     $("copies").value = String(s.count);
     $("date").value = s.date || today();
     $("suggest").querySelectorAll(".chip").forEach(c => c.setAttribute("aria-pressed", String(c === chip)));
@@ -363,7 +370,7 @@
       for (const s of items) {
         const b = document.createElement("button");
         b.type = "button"; b.className = "chip"; b.setAttribute("aria-pressed", "false");
-        b.textContent = s.name + (s.count > 1 ? " ×" + s.count : "");
+        b.textContent = s.name + (s.brand ? " · " + s.brand : "") + (s.count > 1 ? " ×" + s.count : "");
         if (s.date) { const d = document.createElement("small"); d.textContent = prettyDate(s.date); b.append(d); }
         b.addEventListener("click", () => useSuggestion(s, b));
         $("suggest").append(b);
@@ -394,7 +401,9 @@
     if (!name) return;
     if (kind === "bin" && name.length > 76) return msg("Keep a bin name under 76 letters.", true);
     if ((kind === "food" || kind === "bin") && /^(LOC|CMD|BIN):/i.test(name)) return msg("A name can't start with LOC:, CMD: or BIN: (those mark freezer, command and bin labels).", true);
-    if (/[^ -~]/.test(name)) return msg("Use plain letters only: most scanners can't type accents or emoji, so the name would come out garbled.", true);
+    const brand = kind === "food" ? $("brand").value.replace(/\s+/g, " ").trim() : "";
+    if (brand && /^(LOC|CMD|BIN|ID|Printed):/i.test(brand)) return msg("A brand can't start with LOC:, CMD:, BIN:, ID: or Printed:.", true);
+    if (/[^ -~]/.test(name + brand)) return msg("Use plain letters only: most scanners can't type accents or emoji, so the name would come out garbled.", true);
     let labels = [], fzWarn = "";
     if (kind === "loc") {
       if (name.length > 60) return msg("Keep a freezer name under 60 letters.", true);
@@ -436,7 +445,11 @@
         const r = await fetch("api/ids", { method: "POST", headers: { "x-key": key, "content-type": "application/json" }, body: JSON.stringify({ n }) });
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
-        labels = j.ids.map(id => ({ payload: `${name}\nPrinted: ${date}\nID: ${id}`, backup: "ID:" + id, id, title: name, small: prettyDate(date), file: name + " " + id }));
+        // The brand follows the name after " | " in the code, so it stays apart even from a scanner that
+        // drops line breaks (the list shows "Ribeye steaks / Omaha Steaks"); on paper it ends the small line.
+        // and goes at the end of the small line on the label.
+        labels = j.ids.map(id => ({ payload: `${name}${brand ? " | " + brand : ""}\nPrinted: ${date}\nID: ${id}`, backup: "ID:" + id, id, title: name,
+                                    small: prettyDate(date) + (brand ? "  ·  " + brand : ""), file: name + " " + id }));
       } catch (err) {
         $("make").disabled = false;
         return msg("Couldn't get label IDs (" + err.message + ").", true);
@@ -444,7 +457,8 @@
       $("make").disabled = false;
     }
     const fresh = labels.map(l => Object.assign(l, { canvas: draw(l) }));
-    if (fresh.some(l => l.canvas.tooLong)) return msg("That name is too long for a 23 mm label: the code would be too small to scan. Shorten it, or use the long labels.", true);
+    if (fresh.some(l => l.canvas.tooLong)) return msg("That name (with its brand) is too long for a 23 mm label: the code would be too small to scan. Shorten it, or use the long labels.", true);
+    $("brand").value = "";                      // a brand belongs to one food: never carry it to the next label
     const restarted = media === "paper" && printed > 0;
     made = media === "paper" ? made.slice(printed).concat(fresh) : fresh;   // paper collects a whole sheet, minus what's printed
     printed = 0;
