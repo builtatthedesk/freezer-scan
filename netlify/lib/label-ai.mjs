@@ -69,7 +69,7 @@ export async function suggestLabels(jpegBase64){
   const items = Array.isArray(out && out.items) ? out.items : [];
   return items.slice(0, 20).map(i => ({
     name: String(i.name || "").replace(/\s+/g, " ").trim().slice(0, 60),
-    brand: (String(i.brand || "").replace(/\s+/g, " ").trim().slice(0, 40) || null),
+    brand: ((b) => b && !/^(LOC|CMD|BIN|ID|Printed):/i.test(b) ? b : null)(String(i.brand || "").replace(/\s+/g, " ").trim().slice(0, 40)),
     count: Math.min(50, Math.max(1, parseInt(i.count, 10) || 1)),
     date: /^\d{4}-\d{2}-\d{2}$/.test(i.date || "") ? i.date : null,
   })).filter(i => i.name && !/^(LOC|CMD|BIN):/i.test(i.name));
