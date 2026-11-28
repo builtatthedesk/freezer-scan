@@ -46,6 +46,8 @@ h2{font-size:1.35rem;font-weight:700}
 .shelf{display:grid;gap:2px;min-width:0;flex:1 1 220px}
 .shelf .name{font-family:var(--display);font-size:1.8rem;font-weight:700;line-height:1.1;overflow-wrap:anywhere}
 .shelf .name.none{color:var(--mut);font-weight:500}
+.shelf select.name{appearance:auto;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:4px 8px;max-width:100%;cursor:pointer}
+.shelf select.name.none{font-size:1.2rem}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden}
 .seg button{border:0;background:transparent;color:var(--ink);font:600 .95rem var(--body);padding:8px 16px;cursor:pointer}
 .seg button[aria-pressed="true"].in{background:var(--frost);color:var(--frost-ink)}
@@ -140,8 +142,8 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
   <section class="console" aria-label="Scanning">
     <div class="row">
       <div class="shelf">
-        <span class="lbl">Current freezer</span>
-        <span id="shelf" class="name none">Any freezer (optional)</span>
+        <label class="lbl" for="shelf">Current freezer (scan its label, or pick)</label>
+        <select id="shelf" class="name none"></select>
       </div>
       <div class="seg" role="group" aria-label="Mode">
         <button id="mode-in" class="in" aria-pressed="true" type="button">In</button>
@@ -981,9 +983,24 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
                                          Date.parse(it.lastScan || 0) < roundStart);
   }
   function renderShelf(){
-    $("shelf").textContent = shelf || "Any freezer (optional)";
-    $("shelf").classList.toggle("none", !shelf);
+    const sel = $("shelf"), names = allFreezers();
+    if (document.activeElement !== sel) {          // don't rebuild under a finger mid-pick
+      sel.replaceChildren(new Option("Any freezer (optional)", ""), ...names.map(n => new Option(n, n)));
+      sel.value = shelf;
+    }
+    sel.classList.toggle("none", !shelf);
   }
+  // Picking a freezer = scanning its LOC: label (for packing in the kitchen, away from the freezer's sticker).
+  $("shelf").addEventListener("change", (e) => {
+    const name = e.target.value;
+    e.target.blur();                               // keys belong to the scanner again
+    setMode("in");
+    shelf = name; roundStart = name ? Date.now() : 0;
+    LS.set("fs.shelf", shelf); LS.set("fs.round", String(roundStart));
+    if (!armed && ac) setArmed(true, "Listening. Pull the trigger.");   // the picker can steal focus and pause scanning
+    renderShelf(); renderAudit();
+    show("loc", name ? "Freezer set" : "No freezer set", name || "Any freezer", name ? "Items scanned next go here" : "Items scanned next keep the freezer they were in");
+  });
   function renderAudit(){
     const m = missing();
     const scannedThisRound = [...items.values()].some(it => it.shelf === shelf && Date.parse(it.lastScan || 0) >= roundStart);
@@ -998,7 +1015,7 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
     $("move-open").hidden = !canEdit || !$("mover").hidden || !anyIn;
     $("take-open").hidden = !canEdit || !$("taker").hidden || !anyIn;
     $("fz-open").hidden = !canEdit || !$("fzbox").hidden;
-    renderMover(); renderTaker(); renderFreezers();
+    renderMover(); renderTaker(); renderFreezers(); renderShelf();
     const inv = $("inv");
     const live = [...items].filter(([, it]) => it.status === "in");
     const used = [...items].filter(([, it]) => it.status === "out");
