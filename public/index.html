@@ -984,13 +984,13 @@ code{font-family:var(--mono);font-size:.9em;background:var(--frost-soft);padding
   }
   function renderShelf(){
     const sel = $("shelf"), names = allFreezers();
-    if (document.activeElement !== sel) {          // don't rebuild under a finger mid-pick
-      sel.replaceChildren(new Option("Any freezer (optional)", ""), ...names.map(n => new Option(n, n)));
-      sel.value = shelf;
-    }
+    sel.replaceChildren(new Option("Any freezer (optional)", ""), ...names.map(n => new Option(n, n)));
+    sel.value = names.find(n => n.toLowerCase() === shelf.toLowerCase()) || "";   // LOC:garage still shows "Garage"
     sel.classList.toggle("none", !shelf);
   }
   // Picking a freezer = scanning its LOC: label (for packing in the kitchen, away from the freezer's sticker).
+  // A scanner typing into a focused select (scanning paused) would jump it by first letter: block that.
+  $("shelf").addEventListener("keydown", (e) => { if (e.key.length === 1 || e.key === "Enter") e.preventDefault(); });
   $("shelf").addEventListener("change", (e) => {
     const name = e.target.value;
     e.target.blur();                               // keys belong to the scanner again
